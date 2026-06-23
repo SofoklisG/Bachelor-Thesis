@@ -1,0 +1,1078 @@
+---
+title: "Subsampling"
+output: pdf_document
+date: "2026-05-08"
+---
+
+```{r}
+# Load packages, paths, and imputed dataset
+
+library(mice)
+library(posterior)
+library(dplyr)
+library(purrr)
+library(tibble)
+library(tidyr)
+library(ggplot2)
+library(brms)
+library(nimble)
+library(pROC)
+
+options(brms.backend = "rstan")
+
+output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+
+subsampling_results_path <- file.path(
+  output_path,
+  "Results",
+  "Subsampling Analysis"
+)
+
+fig_path <- file.path(output_path, "figures")
+
+if (!dir.exists(subsampling_results_path)) {
+  dir.create(subsampling_results_path, recursive = TRUE)
+}
+
+if (!dir.exists(fig_path)) {
+  dir.create(fig_path)
+}
+
+imp_m5 <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
+
+# Use one representative completed dataset
+data_full <- complete(imp_m5, 1)
+
+```
+
+
+```{r}
+# Define predictors and helper functions
+
+predictors_full <- c(
+  "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
+  "FastingBS", "RestingECG", "MaxHR", "ExerciseAngina",
+  "Oldpeak", "ST_Slope"
+)
+
+all_original_vars <- predictors_full
+
+get_base_predictor <- function(term) {
+  
+  term <- gsub("^b_", "", term)
+  
+  case_when(
+    grepl("^ChestPainType", term) ~ "ChestPainType",
+    grepl("^RestingECG", term) ~ "RestingECG",
+    grepl("^ST_Slope", term) ~ "ST_Slope",
+    grepl("^Sex", term) ~ "Sex",
+    grepl("^FastingBS", term) ~ "FastingBS",
+    grepl("^ExerciseAngina", term) ~ "ExerciseAngina",
+    TRUE ~ term
+  )
+}
+
+clean_variable_names <- function(terms) {
+  terms %>%
+    gsub("^Sex.*", "Sex", .) %>%
+    gsub("^ChestPainType.*", "ChestPainType", .) %>%
+    gsub("^FastingBS.*", "FastingBS", .) %>%
+    gsub("^RestingECG.*", "RestingECG", .) %>%
+    gsub("^ExerciseAngina.*", "ExerciseAngina", .) %>%
+    gsub("^ST_Slope.*", "ST_Slope", .) %>%
+    unique()
+}
+
+saved <- readRDS(
+  file.path(subsampling_results_path, "subsampling_objects_before_consensus.rds")
+)
+
+
+```
+
+
+```{r}
+# Create subsamples 
+
+set.seed(123)
+
+B_freq <- 25
+B_bayes <- 25
+
+subsample_props <- c(0.50, 0.25, 0.125, 0.0625)
+
+create_subsamples <- function(data, prop, B) {
+  
+  n_sub <- floor(nrow(data) * prop)
+  
+  map(
+    1:B,
+    ~ data[sample(seq_len(nrow(data)), size = n_sub, replace = FALSE), ]
+  )
+}
+
+set.seed(123)
+
+freq_subsamples <- list(
+  p50  = create_subsamples(data_full, 0.50, B_freq),
+  p25  = create_subsamples(data_full, 0.25, B_freq),
+  p125 = create_subsamples(data_full, 0.125, B_freq),
+  p625 = create_subsamples(data_full, 0.0625, B_freq)
+)
+
+set.seed(123)
+
+bayes_subsamples <- list(
+  p50  = create_subsamples(data_full, 0.50, B_bayes),
+  p25  = create_subsamples(data_full, 0.25, B_bayes),
+  p125 = create_subsamples(data_full, 0.125, B_bayes),
+  p625 = create_subsamples(data_full, 0.0625, B_bayes)
+)
+
+```
+
+
+```{r}
+# Predictive Performance function
+
+compute_classification_metrics <- function(data, probabilities, cutoff = 0.5) {
+  
+  observed <- as.numeric(as.character(data$HeartDisease))
+  predicted_class <- ifelse(probabilities >= cutoff, 1, 0)
+  
+  roc_object <- pROC::roc(
+    response = observed,
+    predictor = probabilities,
+    quiet = TRUE
+  )
+  
+  TP <- sum(predicted_class == 1 & observed == 1)
+  TN <- sum(predicted_class == 0 & observed == 0)
+  FP <- sum(predicted_class == 1 & observed == 0)
+  FN <- sum(predicted_class == 0 & observed == 1)
+  
+  tibble(
+    AUC = as.numeric(pROC::auc(roc_object)),
+    Accuracy = mean(predicted_class == observed),
+    Sensitivity = ifelse((TP + FN) == 0, NA, TP / (TP + FN)),
+    Specificity = ifelse((TN + FP) == 0, NA, TN / (TN + FP))
+  )
+}
+```
+
+
+```{r}
+# Frequentist backward selection for one representative dataset
+
+fit_glm_model <- function(data, predictors) {
+  
+  if (length(predictors) == 0) {
+    form <- HeartDisease ~ 1
+  } else {
+    form <- as.formula(
+      paste("HeartDisease ~", paste(predictors, collapse = " + "))
+    )
+  }
+  
+  fit <- suppressWarnings(
+    glm(
+      form,
+      data = data,
+      family = binomial,
+      control = glm.control(maxit = 100)
+    )
+  )
+  
+  fit
+}
+
+backward_selection_single <- function(data, predictors, p_cutoff = 0.05) {
+  
+  current_predictors <- predictors
+  removed_variables <- c()
+  
+  repeat {
+    
+    fit <- fit_glm_model(data, current_predictors)
+    coef_table <- summary(fit)$coefficients
+    
+    results <- data.frame(
+      term = rownames(coef_table),
+      p_value = coef_table[, "Pr(>|z|)"],
+      row.names = NULL
+    ) %>%
+      filter(term != "(Intercept)") %>%
+      mutate(base_predictor = get_base_predictor(term))
+    
+    predictor_pvalues <- results %>%
+      group_by(base_predictor) %>%
+      summarise(max_p_value = max(p_value, na.rm = TRUE), .groups = "drop") %>%
+      arrange(desc(max_p_value))
+    
+    worst_var <- predictor_pvalues$base_predictor[1]
+    worst_p <- predictor_pvalues$max_p_value[1]
+    
+    if (is.na(worst_p) || worst_p <= p_cutoff) {
+      break
+    }
+    
+    removed_variables <- c(removed_variables, worst_var)
+    current_predictors <- setdiff(current_predictors, worst_var)
+    
+    if (length(current_predictors) == 0) {
+      break
+    }
+  }
+  
+  final_fit <- fit_glm_model(data, current_predictors)
+  
+  list(
+    final_predictors = current_predictors,
+    removed_variables = removed_variables,
+    final_fit = final_fit
+  )
+}
+```
+
+
+
+```{r}
+run_frequentist_subsampling <- function(subsamples, prop_label) {
+  
+  map_dfr(
+    seq_along(subsamples),
+    function(b) {
+      
+      cat("\nFrequentist subsampling:", prop_label,
+          "| repetition", b, "of", length(subsamples), "\n")
+      
+      dat <- subsamples[[b]]
+      
+      selected_model <- backward_selection_single(
+        data = dat,
+        predictors = predictors_full,
+        p_cutoff = 0.05
+      )
+      
+      selected_vars <- selected_model$final_predictors
+      
+      coef_df <- data.frame(
+        term = names(coef(selected_model$final_fit)),
+        estimate = as.numeric(coef(selected_model$final_fit)),
+        row.names = NULL
+      ) %>%
+        filter(term != "(Intercept)") %>%
+        mutate(
+          base_predictor = get_base_predictor(term),
+          repetition = b,
+          subsample = prop_label
+        )
+      
+      tibble(
+        repetition = b,
+        subsample = prop_label,
+        selected_variables = paste(selected_vars, collapse = ", "),
+        number_selected = length(selected_vars),
+        coefs = list(coef_df),
+        Converged = selected_model$final_fit$converged
+      )
+    }
+  )
+}
+
+freq_subsampling_summary <- bind_rows(
+  run_frequentist_subsampling(freq_subsamples$p50, "50%"),
+  run_frequentist_subsampling(freq_subsamples$p25, "25%"),
+  run_frequentist_subsampling(freq_subsamples$p125, "12.5%"),
+  run_frequentist_subsampling(freq_subsamples$p625, "6.25%")
+)
+
+freq_subsampling_summary
+```
+
+
+
+```{r}
+# Frequentist inclusion frequencies
+
+extract_inclusion_frequency <- function(summary_data, method_name) {
+  
+  map_dfr(
+    seq_len(nrow(summary_data)),
+    function(i) {
+      
+      selected <- unlist(strsplit(summary_data$selected_variables[i], ", "))
+      
+      tibble(
+        variable = all_original_vars,
+        selected = ifelse(all_original_vars %in% selected, 1, 0),
+        repetition = summary_data$repetition[i],
+        subsample = summary_data$subsample[i]
+      )
+    }
+  ) %>%
+    group_by(subsample, variable) %>%
+    summarise(
+      inclusion_frequency = mean(selected),
+      .groups = "drop"
+    ) %>%
+    mutate(method = method_name)
+}
+
+freq_inclusion_frequencies <- extract_inclusion_frequency(
+  freq_subsampling_summary,
+  "Frequentist"
+)
+
+freq_inclusion_frequencies
+```
+
+
+
+```{r}
+# Define Bayesian settings
+
+priors <- c(
+  prior(student_t(7, 0, 2.5), class = "b"),
+  prior(student_t(7, 0, 10), class = "Intercept")
+)
+
+bayes_chains <- 4
+bayes_cores <- min(4, parallel::detectCores())
+bayes_iter <- 800
+bayes_warmup <- 400
+
+
+# Bayesian spike-and-slab variable selection 
+
+full_formula_selection <- HeartDisease ~ Age + Sex + ChestPainType + RestingBP + Cholesterol +
+  FastingBS + RestingECG + MaxHR + ExerciseAngina + Oldpeak + ST_Slope
+
+run_spike_slab_selection <- function(dat, formula_full, niter = 4000, nburnin = 1000) {
+  
+  X <- model.matrix(formula_full, data = dat)[, -1]
+  y <- as.numeric(as.character(dat$HeartDisease))
+  
+  N <- nrow(X)
+  P <- ncol(X)
+  
+  code <- nimbleCode({
+    for (i in 1:N) {
+      logit(p[i]) <- beta0 + inprod(beta_included[1:P], X[i, 1:P])
+      y[i] ~ dbern(p[i])
+    }
+    
+    beta0 ~ dnorm(0, sd = 5)
+    
+    for (j in 1:P) {
+      gamma[j] ~ dbern(0.5)
+      beta[j] ~ dnorm(0, sd = 2.5)
+      beta_included[j] <- gamma[j] * beta[j]
+    }
+  })
+  
+  model <- nimbleModel(
+    code = code,
+    constants = list(N = N, P = P, X = X),
+    data = list(y = y),
+    inits = list(beta0 = 0, beta = rep(0, P), gamma = rep(1, P))
+  )
+  
+  conf <- configureMCMC(
+    model,
+    monitors = c("gamma", "beta_included")
+  )
+  
+  mcmc <- buildMCMC(conf)
+  
+  cmodel <- compileNimble(model)
+  cmcmc <- compileNimble(mcmc, project = model)
+  
+  samples <- runMCMC(
+    cmcmc,
+    niter = niter,
+    nburnin = nburnin,
+    samplesAsCodaMCMC = FALSE
+  )
+  
+  gamma_samples <- samples[, grep("^gamma", colnames(samples))]
+  beta_samples  <- samples[, grep("^beta_included", colnames(samples))]
+  
+  tibble(
+    term = colnames(X),
+    pip = colMeans(gamma_samples),
+    posterior_mean_beta = colMeans(beta_samples),
+    posterior_mean_OR = exp(colMeans(beta_samples))
+  )
+}
+```
+
+
+
+```{r}
+# Run Bayesian subsampling 
+
+
+run_bayesian_subsampling_selection <- function(subsamples, prop_label) {
+  
+  map_dfr(
+    seq_along(subsamples),
+    function(b) {
+      
+      cat("\nBayesian subsampling:", prop_label,
+          "| repetition", b, "of", length(subsamples), "\n")
+      
+      dat <- subsamples[[b]]
+      
+      bayes_out <- run_spike_slab_selection(
+        dat = dat,
+        formula_full = full_formula_selection,
+        niter = 4000,
+        nburnin = 1000
+      )
+      
+      selected_raw <- bayes_out %>%
+        filter(pip > 0.5) %>%
+        pull(term)
+      
+      selected_vars <- clean_variable_names(selected_raw)
+      
+      tibble(
+        repetition = b,
+        subsample = prop_label,
+        selected_variables = paste(selected_vars, collapse = ", "),
+        number_selected = length(selected_vars)
+      )
+    }
+  )
+}
+
+bayes_subsampling_summary <- bind_rows(
+  run_bayesian_subsampling_selection(bayes_subsamples$p50, "50%"),
+  run_bayesian_subsampling_selection(bayes_subsamples$p25, "25%"),
+  run_bayesian_subsampling_selection(bayes_subsamples$p125, "12.5%"),
+  run_bayesian_subsampling_selection(bayes_subsamples$p625, "6.25%")
+)
+
+bayes_subsampling_summary
+
+
+```
+
+```{r}
+# Bayesian inclusion frequencies
+
+bayes_inclusion_frequencies <- extract_inclusion_frequency(
+  bayes_subsampling_summary,
+  "Bayesian"
+)
+
+bayes_inclusion_frequencies
+
+
+```
+
+
+
+```{r}
+# Create 5 subsamples to assess predictive performance of the 2 approaches
+
+B_perf <- 5
+
+set.seed(999)
+
+performance_subsamples <- list(
+  p50  = create_subsamples(data_full, 0.50, B_perf),
+  p25  = create_subsamples(data_full, 0.25, B_perf),
+  p125 = create_subsamples(data_full, 0.125, B_perf),
+  p625 = create_subsamples(data_full, 0.0625, B_perf)
+)
+```
+
+
+```{r}
+# Frequentist predictive performance function
+
+run_frequentist_predictive_performance <- function(subsamples, prop_label) {
+  
+  map_dfr(
+    seq_along(subsamples),
+    function(b) {
+      
+      dat <- subsamples[[b]]
+      
+      selected_model <- backward_selection_single(
+        data = dat,
+        predictors = predictors_full,
+        p_cutoff = 0.05
+      )
+      
+      selected_vars <- selected_model$final_predictors
+      final_fit <- selected_model$final_fit
+      
+      probabilities <- predict(
+        final_fit,
+        newdata = dat,
+        type = "response"
+      )
+      
+      perf <- compute_classification_metrics(
+        data = dat,
+        probabilities = probabilities
+      )
+      
+      coef_table <- summary(final_fit)$coefficients
+      
+coef_results <- data.frame(
+  term = rownames(coef_table),
+  estimate = coef_table[, "Estimate"],
+  row.names = NULL
+) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    term = gsub("^b_", "", term),
+    OR = exp(estimate),
+    method = "Frequentist",
+    subsample = prop_label,
+    repetition = b
+  )
+      
+      perf %>%
+        mutate(
+          method = "Frequentist",
+          subsample = prop_label,
+          repetition = b,
+          selected_variables = paste(selected_vars, collapse = ", "),
+          number_selected = length(selected_vars),
+          converged = final_fit$converged,
+          coefficient_results = list(coef_results)
+        )
+    }
+  )
+}
+
+
+fit_bayesian_selected_model <- function(dat, selected_vars, seed_value) {
+  
+  if (length(selected_vars) == 0) {
+    form <- HeartDisease ~ 1
+  } else {
+    form <- as.formula(
+      paste("HeartDisease ~", paste(selected_vars, collapse = " + "))
+    )
+  }
+  
+  brm(
+    formula = form,
+    data = dat,
+    family = bernoulli(link = "logit"),
+    prior = priors,
+    chains = bayes_chains,
+    iter = bayes_iter,
+    warmup = bayes_warmup,
+    cores = bayes_cores,
+    seed = seed_value,
+    refresh = 0,
+    control = list(adapt_delta = 0.95)
+  )
+}
+
+# Bayesian predictive performance function
+
+run_bayesian_predictive_performance <- function(subsamples, prop_label) {
+  
+  map_dfr(
+    seq_along(subsamples),
+    function(b) {
+      
+      dat <- subsamples[[b]]
+      
+      bayes_out <- run_spike_slab_selection(
+        dat = dat,
+        formula_full = full_formula_selection,
+        niter = 4000,
+        nburnin = 1000
+      )
+      
+      selected_raw <- bayes_out %>%
+        filter(pip > 0.5) %>%
+        pull(term)
+      
+      selected_vars <- clean_variable_names(selected_raw)
+      
+      fit <- fit_bayesian_selected_model(
+        dat = dat,
+        selected_vars = selected_vars,
+        seed_value = 4000 + b
+      )
+      
+      probabilities <- fitted(fit, scale = "response")[, "Estimate"]
+      
+      perf <- compute_classification_metrics(
+        data = dat,
+        probabilities = probabilities
+      )
+      
+posterior_or_draws <- as_draws_df(fit) %>%
+  as.data.frame() %>%
+  select(starts_with("b_")) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "term",
+    values_to = "estimate"
+  ) %>%
+  filter(term != "b_Intercept") %>%
+  mutate(
+    term = gsub("^b_", "", term),
+    OR = exp(estimate),
+    method = "Bayesian",
+    subsample = prop_label,
+    repetition = b
+  )
+      
+      perf %>%
+        mutate(
+          method = "Bayesian",
+          subsample = prop_label,
+          repetition = b,
+          selected_variables = paste(selected_vars, collapse = ", "),
+          number_selected = length(selected_vars),
+          coefficient_results = list(posterior_or_draws)
+        )
+    }
+  )
+}
+
+```
+
+
+```{r}
+# Run predictive performance functions
+
+predictive_performance_raw <- bind_rows(
+  
+  run_frequentist_predictive_performance(performance_subsamples$p50, "50%"),
+  run_frequentist_predictive_performance(performance_subsamples$p25, "25%"),
+  run_frequentist_predictive_performance(performance_subsamples$p125, "12.5%"),
+  run_frequentist_predictive_performance(performance_subsamples$p625, "6.25%"),
+  
+  run_bayesian_predictive_performance(performance_subsamples$p50, "50%"),
+  run_bayesian_predictive_performance(performance_subsamples$p25, "25%"),
+  run_bayesian_predictive_performance(performance_subsamples$p125, "12.5%"),
+  run_bayesian_predictive_performance(performance_subsamples$p625, "6.25%")
+)
+
+predictive_performance_raw
+
+
+# Extract coefficient / posterior OR results from the 5 fitted subsample models
+
+subsample_or_raw <- predictive_performance_raw %>%
+  select(coefficient_results) %>%
+  unnest(coefficient_results)
+```
+
+
+```{r}
+# Mean OR and 95% CI and 95% CRI 
+
+freq_subsample_or_summary <- subsample_or_raw %>%
+  filter(method == "Frequentist") %>%
+  mutate(log_OR = log(OR)) %>%
+  group_by(subsample, term) %>%
+  summarise(
+    n_subsamples = n_distinct(repetition),
+
+    mean_log_OR = mean(log_OR, na.rm = TRUE),
+    sd_log_OR = sd(log_OR, na.rm = TRUE),
+    se_log_OR = sd_log_OR / sqrt(n_subsamples),
+
+    log_lower = mean_log_OR - 1.96 * se_log_OR,
+    log_upper = mean_log_OR + 1.96 * se_log_OR,
+
+    mean_OR = exp(mean_log_OR),
+    OR_lower = exp(log_lower),
+    OR_upper = exp(log_upper),
+
+    .groups = "drop"
+  ) %>%
+  select(
+    subsample,
+    term,
+    n_subsamples,
+    mean_OR,
+    OR_lower,
+    OR_upper
+  )
+
+bayes_subsample_or_summary <- subsample_or_raw %>%
+  filter(method == "Bayesian") %>%
+  group_by(subsample, term) %>%
+  summarise(
+    n_subsamples = n_distinct(repetition),
+    mean_OR = mean(OR, na.rm = TRUE),
+    OR_lower = quantile(OR, 0.025, na.rm = TRUE),
+    OR_upper = quantile(OR, 0.975, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+subsample_or_summary <- bind_rows(
+  freq_subsample_or_summary %>%
+    mutate(method = "Frequentist", interval_type = "95% CI"),
+  
+  bayes_subsample_or_summary %>%
+    mutate(method = "Bayesian", interval_type = "95% CrI")
+) %>%
+  arrange(method, subsample, term)
+
+subsample_or_summary
+```
+
+
+
+```{r}
+# mean and 95% confidence intervals for the predictive performance metrics
+
+mean_ci <- function(x) {
+  
+  x <- x[!is.na(x)]
+  
+  m <- mean(x)
+  se <- sd(x) / sqrt(length(x))
+  
+  c(
+    mean = m,
+    lower = m - 1.96 * se,
+    upper = m + 1.96 * se
+  )
+}
+
+
+predictive_performance_summary <- predictive_performance_raw %>%
+  group_by(method, subsample) %>%
+  summarise(
+    n_subsamples = n(),
+    
+    AUC_mean = mean_ci(AUC)["mean"],
+    AUC_lower = mean_ci(AUC)["lower"],
+    AUC_upper = mean_ci(AUC)["upper"],
+    
+    Accuracy_mean = mean_ci(Accuracy)["mean"],
+    Accuracy_lower = mean_ci(Accuracy)["lower"],
+    Accuracy_upper = mean_ci(Accuracy)["upper"],
+    
+    Sensitivity_mean = mean_ci(Sensitivity)["mean"],
+    Sensitivity_lower = mean_ci(Sensitivity)["lower"],
+    Sensitivity_upper = mean_ci(Sensitivity)["upper"],
+    
+    Specificity_mean = mean_ci(Specificity)["mean"],
+    Specificity_lower = mean_ci(Specificity)["lower"],
+    Specificity_upper = mean_ci(Specificity)["upper"],
+    
+    .groups = "drop"
+  )
+
+predictive_performance_summary
+
+```
+
+
+```{r}
+
+# Combine frequentist and Bayesian inclusion frequencies
+
+all_inclusion_frequencies <- bind_rows(
+  freq_inclusion_frequencies,
+  bayes_inclusion_frequencies
+) %>%
+  arrange(method, subsample, desc(inclusion_frequency))
+
+all_inclusion_frequencies
+
+
+```
+
+
+
+```{r}
+# Plot inclusion frequencies
+
+inclusion_frequency_plot <- all_inclusion_frequencies %>%
+  mutate(
+    variable = factor(variable, levels = rev(all_original_vars)),
+    subsample = factor(subsample, levels = c("50%", "25%", "12.5%", "6.25%"))
+  ) %>%
+  ggplot(aes(x = variable, y = inclusion_frequency, fill = method)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  facet_wrap(~ subsample, ncol = 2) +
+  labs(
+    x = "Variable",
+    y = "Inclusion Frequency",
+    fill = "Method"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    strip.text = element_text(size = 14, face = "bold"),
+    plot.title = element_text(size = 18, face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+inclusion_frequency_plot
+
+ggsave(
+  filename = file.path(fig_path, "subsampling_inclusion_frequencies.png"),
+  plot = inclusion_frequency_plot,
+  width = 12,
+  height = 8,
+  dpi = 400
+)
+```
+
+```{r}
+# Models from subsampling inclusion frequencies
+
+stability_threshold <- 0.50
+
+subsampling_consensus_models <- 
+  all_inclusion_frequencies %>%
+  filter(inclusion_frequency >= stability_threshold) %>%
+  group_by(method, subsample) %>%
+  summarise(
+    consensus_variables = paste(variable, collapse = ", "),
+    .groups = "drop"
+  )
+
+subsampling_consensus_models
+
+
+```
+
+
+
+
+
+```{r}
+# Model size stability
+
+model_size_stability <- bind_rows(
+  freq_subsampling_summary %>%
+    select(repetition, subsample, number_selected) %>%
+    mutate(method = "Frequentist"),
+  
+  bayes_subsampling_summary %>%
+    select(repetition, subsample, number_selected) %>%
+    mutate(method = "Bayesian")
+)
+
+model_size_summary <- model_size_stability %>%
+  group_by(method, subsample) %>%
+  summarise(
+    mean_number_selected = mean(number_selected),
+    sd_number_selected = sd(number_selected),
+    min_number_selected = min(number_selected),
+    max_number_selected = max(number_selected),
+    .groups = "drop"
+  )
+
+model_size_summary
+
+
+```
+
+
+```{r}
+# Runtime stability for variable-selection subsampling procedures
+
+B_time <- 10
+n_time_runs <- 5
+
+runtime_props <- list(
+  "50%"   = 0.50,
+  "25%"   = 0.25,
+  "12.5%" = 0.125,
+  "6.25%" = 0.0625
+)
+
+run_frequentist_runtime_once <- function(run_id, prop_label, prop_value) {
+  
+  set.seed(500 + run_id)
+  
+  subsamples_time <- create_subsamples(
+    data_full,
+    prop_value,
+    B_time
+  )
+  
+  start_time <- Sys.time()
+  
+  invisible(
+    run_frequentist_subsampling(
+      subsamples_time,
+      prop_label
+    )
+  )
+  
+  end_time <- Sys.time()
+  
+  total_time <- as.numeric(
+    difftime(end_time, start_time, units = "secs")
+  )
+  
+  tibble(
+    method = "Frequentist",
+    subsample = prop_label,
+    run = run_id,
+    total_runtime_seconds = total_time,
+    mean_runtime_per_subsample = total_time / B_time
+  )
+}
+
+run_bayesian_runtime_once <- function(run_id, prop_label, prop_value) {
+  
+  set.seed(500 + run_id)
+  
+  subsamples_time <- create_subsamples(
+    data_full,
+    prop_value,
+    B_time
+  )
+  
+  start_time <- Sys.time()
+  
+  invisible(
+    run_bayesian_subsampling_selection(
+      subsamples_time,
+      prop_label
+    )
+  )
+  
+  end_time <- Sys.time()
+  
+  total_time <- as.numeric(
+    difftime(end_time, start_time, units = "secs")
+  )
+  
+  tibble(
+    method = "Bayesian",
+    subsample = prop_label,
+    run = run_id,
+    total_runtime_seconds = total_time,
+    mean_runtime_per_subsample = total_time / B_time
+  )
+}
+
+runtime_stability_raw <- bind_rows(
+  
+  map_dfr(
+    names(runtime_props),
+    function(prop_label) {
+      
+      map_dfr(
+        1:n_time_runs,
+        ~ run_frequentist_runtime_once(
+          run_id = .x,
+          prop_label = prop_label,
+          prop_value = runtime_props[[prop_label]]
+        )
+      )
+    }
+  ),
+  
+  map_dfr(
+    names(runtime_props),
+    function(prop_label) {
+      
+      map_dfr(
+        1:n_time_runs,
+        ~ run_bayesian_runtime_once(
+          run_id = .x,
+          prop_label = prop_label,
+          prop_value = runtime_props[[prop_label]]
+        )
+      )
+    }
+  )
+)
+
+runtime_stability_summary <- runtime_stability_raw %>%
+  group_by(method, subsample) %>%
+  summarise(
+    
+    Total_Runtime = paste0(
+      round(mean(total_runtime_seconds, na.rm = TRUE), 2),
+      " ± ",
+      round(sd(total_runtime_seconds, na.rm = TRUE), 2),
+      " sec"
+    ),
+    
+    Mean_Runtime_Per_Subsample = paste0(
+      round(mean(mean_runtime_per_subsample, na.rm = TRUE), 2),
+      " ± ",
+      round(sd(mean_runtime_per_subsample, na.rm = TRUE), 2),
+      " sec"
+    ),
+    
+    .groups = "drop"
+  )
+
+runtime_stability_summary
+```
+```{r}
+# Save results
+
+write.csv(
+  subsample_or_raw,
+  file.path(subsampling_results_path, "individual_subsample_OR_raw.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  subsample_or_summary,
+  file.path(subsampling_results_path, "individual_subsample_OR_summary_intervals.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  predictive_performance_raw_export,
+  file.path(subsampling_results_path, "individual_subsample_predictive_performance_raw.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  predictive_performance_summary,
+  file.path(subsampling_results_path, "individual_subsample_predictive_performance_summary_CI.csv"),
+  row.names = FALSE
+)
+
+write.csv(runtime_stability_summary,
+          file.path(subsampling_results_path, "subsampling_runtime_stability_summary.csv"),
+          row.names = FALSE)
+
+write.csv(runtime_stability_raw,
+          file.path(subsampling_results_path, "subsampling_runtime_stability_raw.csv"),
+          row.names = FALSE)
+
+
+write.csv(all_inclusion_frequencies,
+  file.path(subsampling_results_path, "subsampling_inclusion_frequencies.csv"),
+  row.names = FALSE
+)
+
+write.csv(model_size_summary,
+  file.path(subsampling_results_path, "subsampling_model_size_summary.csv"),
+  row.names = FALSE
+)
+
+
+
+
+```
+
+
+
+

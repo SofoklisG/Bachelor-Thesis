@@ -1,0 +1,1364 @@
+---
+title: "Bayesian Logistic Regression & pooling"
+output: pdf_document
+date: "2026-05-06"
+---
+
+```{r}
+# Load packages, paths, and imputed datasets
+
+library(mice)
+library(brms)
+library(dplyr)
+library(purrr)
+library(tibble)
+library(tidyr)
+library(posterior)
+library(nimble)
+library(ggplot2)
+library(pROC)
+
+options(brms.backend = "rstan")
+# Results path
+
+bayes_results_path <- file.path(output_path, "Results", "Bayesian Approach")
+
+output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+fig_path <- file.path(output_path, "figures")
+
+# Results path
+
+output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+
+bayes_results_path <- file.path(
+  output_path,
+  "Results",
+  "Bayesian Approach"
+)
+
+fig_path <- file.path(output_path, "figures")
+
+if (!dir.exists(fig_path)) {
+  dir.create(fig_path)
+}
+
+imp_m5  <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
+imp_m10 <- readRDS(file.path(output_path, "imputed_data_m10.rds"))
+```
+
+
+
+```{r}
+# Extract completed datasets
+
+completed_m5  <- complete(imp_m5, action = "all")
+completed_m10 <- complete(imp_m10, action = "all")
+
+```
+
+
+```{r}
+# Define Bayesian model, priors, and MCMC settings
+
+full_formula <- bf(
+  HeartDisease ~ Age + Sex + ChestPainType + RestingBP + Cholesterol +
+    FastingBS + RestingECG + MaxHR + ExerciseAngina + Oldpeak + ST_Slope
+)
+
+priors <- c(
+  prior(student_t(7, 0, 2.5), class = "b"),
+  prior(student_t(7, 0, 10), class = "Intercept")
+)
+
+bayes_chains <- 4
+bayes_cores <- min(4, parallel::detectCores())
+bayes_iter <- 800
+bayes_warmup <- 400
+bayes_seed <- 123
+
+
+# Fit full Bayesian logistic regression models
+
+fit_full_bayes <- function(completed_data_list) {
+  
+  map(
+    completed_data_list,
+    ~ brm(
+      formula = full_formula,
+      data = .x,
+      family = bernoulli(link = "logit"),
+      prior = priors,
+      chains = bayes_chains,
+      iter = bayes_iter,
+      warmup = bayes_warmup,
+      cores = bayes_cores,
+      seed = bayes_seed,
+      control = list(adapt_delta = 0.95)
+    )
+  )
+}
+
+# Fit full Bayesian logistic regression models 
+
+fits_full_m5 <- fit_full_bayes(completed_m5)
+
+fits_full_m10 <- fit_full_bayes(completed_m10)
+
+```
+
+
+
+```{r}
+# Pool posterior draws across imputations
+
+pool_bayes_draws <- function(fits) {
+  
+  draws <- map2_dfr(
+    fits,
+    seq_along(fits),
+    function(fit, imp) {
+      as_draws_df(fit) %>%
+        as.data.frame() %>%
+        select(any_of("b_Intercept"), starts_with("b_")) %>%
+        mutate(imputation = imp)
+    }
+  )
+  
+  draws %>%
+    select(-imputation) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "term",
+      values_to = "estimate"
+    ) %>%
+    group_by(term) %>%
+    summarise(
+      posterior_mean = mean(estimate),
+      lower_95 = quantile(estimate, 0.025),
+      upper_95 = quantile(estimate, 0.975),
+      OR = exp(posterior_mean),
+      OR_lower = exp(lower_95),
+      OR_upper = exp(upper_95),
+      .groups = "drop"
+    )
+}
+
+pooled_full_m5 <- pool_bayes_draws(fits_full_m5)
+pooled_full_m10 <- pool_bayes_draws(fits_full_m10)
+
+pooled_full_m5
+pooled_full_m10
+
+# Save pooled posterior summaries
+
+write.csv(
+  pooled_full_m5,
+  file.path(bayes_results_path, "bayesian_full_model_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  pooled_full_m10,
+  file.path(bayes_results_path, "bayesian_full_model_m10.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Extract HMC diagnostics
+
+extract_hmc_diagnostics <- function(fits) {
+  
+  map2_dfr(
+    fits,
+    seq_along(fits),
+    function(fit, imp) {
+      
+      posterior::summarise_draws(
+        as_draws_array(fit),
+        rhat,
+        ess_bulk,
+        ess_tail,
+        mcse_mean,
+        sd
+      ) %>%
+        as.data.frame() %>%
+        filter(grepl("^b_|^Intercept", variable)) %>%
+        mutate(
+          imputation = imp,
+          mcse_ratio = mcse_mean / sd
+        )
+    }
+  )
+}
+
+hmc_diagnostics_m5 <- extract_hmc_diagnostics(fits_full_m5)
+hmc_diagnostics_m10 <- extract_hmc_diagnostics(fits_full_m10)
+
+hmc_diagnostics_m5
+hmc_diagnostics_m10
+```
+
+
+```{r}
+# Save HMC diagnostics
+
+write.csv(
+  hmc_diagnostics_m5,
+  file.path(output_path, "bayesian_hmc_diagnostics_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  hmc_diagnostics_m10,
+  file.path(output_path, "bayesian_hmc_diagnostics_m10.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Run spike-and-slab variable selection and compute PIPs
+
+full_formula_selection <- HeartDisease ~ Age + Sex + ChestPainType + RestingBP + Cholesterol +
+  FastingBS + RestingECG + MaxHR + ExerciseAngina + Oldpeak + ST_Slope
+
+run_spike_slab_selection <- function(dat, formula_full, niter = 8000, nburnin = 2000) {
+  
+  X <- model.matrix(formula_full, data = dat)[, -1]
+  y <- as.numeric(as.character(dat$HeartDisease))
+  
+  N <- nrow(X)
+  P <- ncol(X)
+  
+  code <- nimbleCode({
+    for (i in 1:N) {
+      logit(p[i]) <- beta0 + inprod(beta_included[1:P], X[i, 1:P])
+      y[i] ~ dbern(p[i])
+    }
+    
+    beta0 ~ dnorm(0, sd = 5)
+    
+    for (j in 1:P) {
+      gamma[j] ~ dbern(0.5)
+      beta[j] ~ dnorm(0, sd = 2.5)
+      beta_included[j] <- gamma[j] * beta[j]
+    }
+  })
+  
+  model <- nimbleModel(
+    code = code,
+    constants = list(N = N, P = P, X = X),
+    data = list(y = y),
+    inits = list(beta0 = 0, beta = rep(0, P), gamma = rep(1, P))
+  )
+  
+  conf <- configureMCMC(model, monitors = c("gamma"))
+  mcmc <- buildMCMC(conf)
+  
+  cmodel <- compileNimble(model)
+  cmcmc <- compileNimble(mcmc, project = model)
+  
+  samples <- runMCMC(
+    cmcmc,
+    niter = niter,
+    nburnin = nburnin,
+    samplesAsCodaMCMC = FALSE
+  )
+  
+  gamma_samples <- samples[, grep("^gamma", colnames(samples))]
+  
+  tibble(
+    term = colnames(X),
+    pip = colMeans(gamma_samples)
+  )
+}
+
+# Run spike-and-slab variable selection 
+
+spike_slab_pips_m5 <- map(
+  completed_m5,
+  run_spike_slab_selection,
+  formula_full = full_formula_selection
+)
+
+spike_slab_pips_m10 <- map(
+  completed_m10,
+  run_spike_slab_selection,
+  formula_full = full_formula_selection
+)
+
+```
+
+
+```{r}
+# Average posterior inclusion probabilities across imputations
+
+avg_pips_m5 <- bind_rows(spike_slab_pips_m5, .id = "imputation") %>%
+  group_by(term) %>%
+  summarise(
+    mean_pip = mean(pip),
+    sd_pip = sd(pip),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_pip))
+
+avg_pips_m10 <- bind_rows(spike_slab_pips_m10, .id = "imputation") %>%
+  group_by(term) %>%
+  summarise(
+    mean_pip = mean(pip),
+    sd_pip = sd(pip),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_pip))
+
+avg_pips_m5
+avg_pips_m10
+```
+
+
+```{r}
+# Save posterior inclusion probabilities
+
+write.csv(
+  avg_pips_m5,
+  file.path(output_path, "bayesian_pips_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  avg_pips_m10,
+  file.path(output_path, "bayesian_pips_m10.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Select variables using PIP threshold
+
+clean_variable_names <- function(terms) {
+  terms %>%
+    gsub("^Sex.*", "Sex", .) %>%
+    gsub("^ChestPainType.*", "ChestPainType", .) %>%
+    gsub("^FastingBS.*", "FastingBS", .) %>%
+    gsub("^RestingECG.*", "RestingECG", .) %>%
+    gsub("^ExerciseAngina.*", "ExerciseAngina", .) %>%
+    gsub("^ST_Slope.*", "ST_Slope", .) %>%
+    unique()
+}
+
+selected_bayes_m5_raw <- avg_pips_m5 %>%
+  filter(mean_pip > 0.5) %>%
+  pull(term)
+
+selected_bayes_m10_raw <- avg_pips_m10 %>%
+  filter(mean_pip > 0.5) %>%
+  pull(term)
+
+selected_bayes_m5 <- clean_variable_names(selected_bayes_m5_raw)
+selected_bayes_m10 <- clean_variable_names(selected_bayes_m10_raw)
+
+selected_bayes_m5
+selected_bayes_m10
+```
+
+
+```{r}
+# Refit final Bayesian models 
+
+final_formula_m5 <- as.formula(
+  paste("HeartDisease ~", paste(selected_bayes_m5, collapse = " + "))
+)
+
+final_formula_m10 <- as.formula(
+  paste("HeartDisease ~", paste(selected_bayes_m10, collapse = " + "))
+)
+
+# Use the same selected predictors and same order for both final Bayesian models
+
+original_variable_order <- c(
+  "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
+  "FastingBS", "RestingECG", "MaxHR", "ExerciseAngina",
+  "Oldpeak", "ST_Slope"
+)
+
+selected_bayes_common <- original_variable_order[
+  original_variable_order %in% selected_bayes_m5 &
+    original_variable_order %in% selected_bayes_m10
+]
+
+selected_bayes_common
+
+final_formula_bayes <- as.formula(
+  paste("HeartDisease ~", paste(selected_bayes_common, collapse = " + "))
+)
+
+final_formula_bayes
+
+fit_final_bayes <- function(completed_data_list, formula_final) {
+  
+  map(
+    completed_data_list,
+    ~ brm(
+      formula = formula_final,
+      data = .x,
+      family = bernoulli(link = "logit"),
+      prior = priors,
+      chains = bayes_chains,
+      iter = bayes_iter,
+      warmup = bayes_warmup,
+      cores = bayes_cores,
+      seed = bayes_seed,
+      control = list(adapt_delta = 0.95)
+    )
+  )
+}
+
+
+fits_final_m5 <- fit_final_bayes(completed_m5, final_formula_bayes)
+
+fits_final_m10 <- fit_final_bayes(completed_m10, final_formula_bayes)
+
+```
+
+
+```{r}
+# Extract HMC diagnostics for final Bayesian models
+
+hmc_diagnostics_final_m5 <- extract_hmc_diagnostics(fits_final_m5)
+hmc_diagnostics_final_m10 <- extract_hmc_diagnostics(fits_final_m10)
+
+hmc_diagnostics_final_m5
+hmc_diagnostics_final_m10
+
+# Save HMC diagnostics for final Bayesian models
+
+write.csv(
+  hmc_diagnostics_final_m5,
+  file.path(bayes_results_path, "bayesian_hmc_diagnostics_final_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  hmc_diagnostics_final_m10,
+  file.path(bayes_results_path, "bayesian_hmc_diagnostics_final_m10.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Compute Bayesian predicted probabilities for each imputed dataset
+
+get_bayesian_predicted_probabilities <- function(fits_final, m_value) {
+  
+  map_dfr(
+    fits_final,
+    function(fit) {
+      data.frame(
+        observation = seq_len(nrow(fit$data)),
+        HeartDisease = fit$data$HeartDisease,
+        predicted_probability = fitted(fit, scale = "response")[, "Estimate"]
+      )
+    },
+    .id = "imputation"
+  ) %>%
+    mutate(
+      imputation = as.numeric(imputation),
+      m = m_value
+    )
+}
+
+
+bayesian_predicted_probabilities_m5 <- get_bayesian_predicted_probabilities(
+  fits_final = fits_final_m5,
+  m_value = 5
+)
+
+bayesian_predicted_probabilities_m10 <- get_bayesian_predicted_probabilities(
+  fits_final = fits_final_m10,
+  m_value = 10
+)
+
+
+# Averaged predicted probabilities for plots 
+
+bayesian_predicted_probabilities_avg_m5 <- bayesian_predicted_probabilities_m5 %>%
+  group_by(observation, HeartDisease) %>%
+  summarise(
+    predicted_probability = mean(predicted_probability),
+    .groups = "drop"
+  ) %>%
+  mutate(m = 5)
+
+bayesian_predicted_probabilities_avg_m10 <- bayesian_predicted_probabilities_m10 %>%
+  group_by(observation, HeartDisease) %>%
+  summarise(
+    predicted_probability = mean(predicted_probability),
+    .groups = "drop"
+  ) %>%
+  mutate(m = 10)
+
+write.csv(
+  bayesian_predicted_probabilities_m5,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_by_imputation_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayesian_predicted_probabilities_m10,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_by_imputation_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayesian_predicted_probabilities_avg_m5,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_avg_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayesian_predicted_probabilities_avg_m10,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_avg_m10.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+
+# Bayesian predictive performance with 95% confidence intervals
+# Performance is computed separately for each imputed dataset,
+# then averaged across imputations using mean ± 1.96 * SE.
+
+compute_bayesian_performance_by_imputation <- function(pred_data, m_value) {
+  
+  pred_data <- pred_data %>%
+    mutate(
+      HeartDisease = as.numeric(as.character(HeartDisease)),
+      predicted_class = ifelse(predicted_probability >= 0.5, 1, 0)
+    )
+  
+  pred_data %>%
+    group_by(imputation) %>%
+    summarise(
+      AUC = as.numeric(
+        auc(
+          roc(
+            response = HeartDisease,
+            predictor = predicted_probability,
+            quiet = TRUE
+          )
+        )
+      ),
+      
+      Accuracy = mean(predicted_class == HeartDisease),
+      
+      TP = sum(predicted_class == 1 & HeartDisease == 1),
+      TN = sum(predicted_class == 0 & HeartDisease == 0),
+      FP = sum(predicted_class == 1 & HeartDisease == 0),
+      FN = sum(predicted_class == 0 & HeartDisease == 1),
+      
+      Sensitivity = ifelse((TP + FN) == 0, NA, TP / (TP + FN)),
+      Specificity = ifelse((TN + FP) == 0, NA, TN / (TN + FP)),
+      
+      .groups = "drop"
+    ) %>%
+    mutate(m = m_value)
+}
+
+
+mean_ci <- function(x) {
+  
+  x <- x[!is.na(x)]
+  
+  m <- mean(x)
+  se <- sd(x) / sqrt(length(x))
+  
+  c(
+    mean = m,
+    lower = m - 1.96 * se,
+    upper = m + 1.96 * se
+  )
+}
+
+
+summarise_bayesian_performance <- function(performance_by_imp, m_value) {
+  
+  performance_by_imp %>%
+    summarise(
+      m = m_value,
+      n_imputations = n(),
+      
+      AUC_mean = mean_ci(AUC)["mean"],
+      AUC_lower = mean_ci(AUC)["lower"],
+      AUC_upper = mean_ci(AUC)["upper"],
+      
+      Accuracy_mean = mean_ci(Accuracy)["mean"],
+      Accuracy_lower = mean_ci(Accuracy)["lower"],
+      Accuracy_upper = mean_ci(Accuracy)["upper"],
+      
+      Sensitivity_mean = mean_ci(Sensitivity)["mean"],
+      Sensitivity_lower = mean_ci(Sensitivity)["lower"],
+      Sensitivity_upper = mean_ci(Sensitivity)["upper"],
+      
+      Specificity_mean = mean_ci(Specificity)["mean"],
+      Specificity_lower = mean_ci(Specificity)["lower"],
+      Specificity_upper = mean_ci(Specificity)["upper"]
+    )
+}
+```
+
+
+
+```{r}
+# Compute performance separately for each imputed dataset
+
+bayes_performance_by_imp_m5 <- compute_bayesian_performance_by_imputation(
+  pred_data = bayesian_predicted_probabilities_m5,
+  m_value = 5
+)
+
+bayes_performance_by_imp_m10 <- compute_bayesian_performance_by_imputation(
+  pred_data = bayesian_predicted_probabilities_m10,
+  m_value = 10
+)
+
+
+# Summarise mean performance with 95% confidence intervals
+
+bayes_performance_summary_m5 <- summarise_bayesian_performance(
+  bayes_performance_by_imp_m5,
+  m_value = 5
+)
+
+bayes_performance_summary_m10 <- summarise_bayesian_performance(
+  bayes_performance_by_imp_m10,
+  m_value = 10
+)
+
+
+bayes_performance_results <- bind_rows(
+  bayes_performance_summary_m5,
+  bayes_performance_summary_m10
+)
+
+bayes_performance_results
+```
+
+
+```{r}
+# Plot ROC curve for Bayesian model m = 10
+
+bayes_roc_m10 <- roc(
+  response = bayesian_predicted_probabilities_avg_m10$HeartDisease,
+  predictor = bayesian_predicted_probabilities_avg_m10$predicted_probability,
+  quiet = TRUE
+)
+
+roc_plot_bayes_m10 <- ggroc(
+  bayes_roc_m10,
+  legacy.axes = TRUE,
+  linewidth = 1.4
+) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed",
+    colour = "grey60"
+  ) +
+  labs(
+    title = "Bayesian ROC Curve",
+    subtitle = paste0(
+      "Final Bayesian model for m = 10 (AUC = ",
+      round(bayes_performance_summary_m10$AUC_mean, 3),
+      ")"
+    ),
+    x = "1 - Specificity",
+    y = "Sensitivity"
+  ) +
+  coord_cartesian(
+    xlim = c(0, 1),
+    ylim = c(0, 1)
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(face = "bold", size = 18),
+    plot.subtitle = element_text(size = 14),
+    axis.title = element_text(face = "bold", size = 15),
+    axis.text = element_text(size = 13),
+    panel.grid.minor = element_blank()
+  )
+
+roc_plot_bayes_m10
+
+ggsave(
+  filename = file.path(fig_path, "bayesian_roc_curve_m10.png"),
+  plot = roc_plot_bayes_m10,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+```
+
+
+```{r}
+# Save Bayesian predictive performance results
+
+write.csv(
+  bayesian_predicted_probabilities_m5,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_by_imputation_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayesian_predicted_probabilities_m10,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_by_imputation_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayesian_predicted_probabilities_avg_m5,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_avg_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayesian_predicted_probabilities_avg_m10,
+  file.path(bayes_results_path, "bayesian_predicted_probabilities_avg_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayes_performance_by_imp_m5,
+  file.path(bayes_results_path, "bayesian_predictive_performance_by_imputation_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayes_performance_by_imp_m10,
+  file.path(bayes_results_path, "bayesian_predictive_performance_by_imputation_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayes_performance_results,
+  file.path(bayes_results_path, "bayesian_predictive_performance_summary_CI.csv"),
+  row.names = FALSE
+)
+
+```
+
+
+```{r}
+# Pool final Bayesian posterior draws
+
+pooled_final_m5 <- pool_bayes_draws(fits_final_m5)
+pooled_final_m10 <- pool_bayes_draws(fits_final_m10)
+
+pooled_final_m5
+pooled_final_m10
+```
+
+
+```{r}
+# Save final Bayesian model results
+
+write.csv(
+  pooled_final_m5,
+  file.path(bayes_results_path, "bayesian_final_results_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  pooled_final_m10,
+  file.path(bayes_results_path, "bayesian_final_results_m10.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Create Bayesian summary tables
+
+all_original_vars <- c(
+  "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
+  "FastingBS", "RestingECG", "MaxHR", "ExerciseAngina",
+  "Oldpeak", "ST_Slope"
+)
+
+make_bayesian_results <- function(
+    pooled_full,
+    pooled_final,
+    selected_bayes,
+    fits_final,
+    m_value
+) {
+  
+  selected_vars_clean <- clean_variable_names(selected_bayes)
+  removed_bayes <- setdiff(all_original_vars, selected_vars_clean)
+  
+  bayesian_full_results <- pooled_full %>%
+    mutate(
+      term = gsub("^b_", "", term),
+      interval_width = OR_upper - OR_lower
+    )
+  
+  bayesian_final_results <- pooled_final %>%
+    mutate(
+      term = gsub("^b_", "", term),
+      interval_width = OR_upper - OR_lower
+    )
+  
+  bayesian_model_summary <- data.frame(
+    m = m_value,
+    selected_variables = paste(selected_vars_clean, collapse = ", "),
+    number_selected_variables = length(selected_vars_clean),
+    removed_variables = paste(removed_bayes, collapse = ", "),
+    number_removed_variables = length(removed_bayes)
+  )
+  
+  bayesian_posterior_probabilities <- map_dfr(
+    fits_final,
+    function(fit) {
+      as_draws_df(fit) %>%
+        as.data.frame() %>%
+        select(starts_with("b_")) %>%
+        summarise(across(everything(), ~ mean(.x > 0))) %>%
+        pivot_longer(
+          cols = everything(),
+          names_to = "term",
+          values_to = "P_beta_greater_0"
+        )
+    },
+    .id = "imputation"
+  ) %>%
+    group_by(term) %>%
+    summarise(
+      mean_P_beta_greater_0 = mean(P_beta_greater_0),
+      .groups = "drop"
+    ) %>%
+    mutate(term = gsub("^b_", "", term))
+  
+  bayesian_comparison_final_results <- bayesian_final_results %>%
+    left_join(
+      bayesian_posterior_probabilities,
+      by = "term"
+    ) %>%
+    mutate(
+      m = m_value,
+      selected_variables = paste(selected_vars_clean, collapse = ", "),
+      number_selected_variables = length(selected_vars_clean),
+      removed_variables = paste(removed_bayes, collapse = ", "),
+      number_removed_variables = length(removed_bayes)
+    )
+  
+  list(
+    full_results = bayesian_full_results,
+    final_results = bayesian_final_results,
+    posterior_probabilities = bayesian_posterior_probabilities,
+    model_summary = bayesian_model_summary,
+    comparison_final_results = bayesian_comparison_final_results
+  )
+}
+
+bayesian_results_m5 <- make_bayesian_results(
+  pooled_full = pooled_full_m5,
+  pooled_final = pooled_final_m5,
+  selected_bayes = selected_bayes_m5,
+  fits_final = fits_final_m5,
+  m_value = 5
+)
+
+bayesian_results_m10 <- make_bayesian_results(
+  pooled_full = pooled_full_m10,
+  pooled_final = pooled_final_m10,
+  selected_bayes = selected_bayes_m10,
+  fits_final = fits_final_m10,
+  m_value = 10
+)
+
+bayesian_model_summary_m5_m10 <- bind_rows(
+  bayesian_results_m5$model_summary,
+  bayesian_results_m10$model_summary
+)
+
+bayesian_comparison_final_results_m5_m10 <- bind_rows(
+  bayesian_results_m5$comparison_final_results,
+  bayesian_results_m10$comparison_final_results
+)
+
+bayesian_model_summary_m5_m10
+bayesian_comparison_final_results_m5_m10
+```
+
+
+
+```{r}
+# Save Bayesian summary tables
+
+write.csv(
+  bayesian_model_summary_m5_m10,
+  file.path(output_path, "bayesian_model_summary_m5_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayesian_comparison_final_results_m5_m10,
+  file.path(output_path, "bayesian_comparison_final_results_m5_m10.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Bayesian runtime stability
+
+n_time_runs <- 5
+
+time_bayes_full_model <- function(run_id, completed_data_list, m_value) {
+  
+  time_out <- system.time({
+    fit_full_bayes(completed_data_list)
+  })
+  
+  tibble(
+    procedure = "Full Bayesian HMC model",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_bayes_selection <- function(run_id, completed_data_list, m_value) {
+  
+  time_out <- system.time({
+    map(
+      completed_data_list,
+      run_spike_slab_selection,
+      formula_full = full_formula_selection
+    )
+  })
+  
+  tibble(
+    procedure = "Bayesian spike-and-slab variable selection",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_bayes_final_model <- function(run_id, completed_data_list, formula_final, m_value) {
+  
+  time_out <- system.time({
+    fit_final_bayes(completed_data_list, formula_final)
+  })
+  
+  tibble(
+    procedure = "Final Bayesian HMC model",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_bayes_prediction <- function(run_id, fits_final, m_value) {
+  
+  time_out <- system.time({
+    map_dfr(
+      fits_final,
+      function(fit) {
+        data.frame(
+          observation = seq_len(nrow(fit$data)),
+          HeartDisease = fit$data$HeartDisease,
+          predicted_probability = fitted(fit)[, "Estimate"]
+        )
+      },
+      .id = "imputation"
+    ) %>%
+      group_by(observation, HeartDisease) %>%
+      summarise(
+        predicted_probability = mean(predicted_probability),
+        .groups = "drop"
+      )
+  })
+  
+  tibble(
+    procedure = "Bayesian predicted probabilities",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+bayes_runtime_stability_raw <- bind_rows(
+  
+  map_dfr(1:n_time_runs, ~ time_bayes_full_model(.x, completed_m5, 5)),
+  
+  map_dfr(1:n_time_runs, ~ time_bayes_selection(.x, completed_m5, 5)),
+  
+  map_dfr(1:n_time_runs, ~ time_bayes_final_model(.x, completed_m5, final_formula_m5, 5)),
+  
+  map_dfr(1:n_time_runs, ~ time_bayes_prediction(.x, fits_final_m5, 5))
+)
+
+bayes_runtime_stability_summary <- bayes_runtime_stability_raw %>%
+  group_by(procedure, m) %>%
+  summarise(
+    Mean_Runtime = paste0(
+      round(mean(elapsed_time_seconds, na.rm = TRUE), 3),
+      " ± ",
+      round(sd(elapsed_time_seconds, na.rm = TRUE), 3),
+      " sec"
+    ),
+    .groups = "drop"
+  )
+
+bayes_runtime_stability_summary
+
+write.csv(
+  bayes_runtime_stability_raw,
+  file.path(bayes_results_path, "bayesian_runtime_stability_raw.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bayes_runtime_stability_summary,
+  file.path(bayes_results_path, "bayesian_runtime_stability_summary.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+
+```{r}
+
+# Bayesian Plots
+
+# Create Bayesian PIP plot
+
+to_original_variable <- function(x) {
+  x %>%
+    gsub("^Sex.*", "Sex", .) %>%
+    gsub("^ChestPainType.*", "ChestPainType", .) %>%
+    gsub("^FastingBS.*", "FastingBS", .) %>%
+    gsub("^RestingECG.*", "RestingECG", .) %>%
+    gsub("^ExerciseAngina.*", "ExerciseAngina", .) %>%
+    gsub("^ST_Slope.*", "ST_Slope", .)
+}
+
+pips_original_m5 <- avg_pips_m5 %>%
+  mutate(variable = to_original_variable(term)) %>%
+  group_by(variable) %>%
+  summarise(mean_pip = max(mean_pip), .groups = "drop")
+
+pips_original_m10 <- avg_pips_m10 %>%
+  mutate(variable = to_original_variable(term)) %>%
+  group_by(variable) %>%
+  summarise(mean_pip = max(mean_pip), .groups = "drop")
+
+pip_original_plot <- bind_rows(
+  pips_original_m5 %>% mutate(m = "m = 5"),
+  pips_original_m10 %>% mutate(m = "m = 10")
+) %>%
+  mutate(variable = reorder(variable, mean_pip)) %>%
+  ggplot(aes(x = variable, y = mean_pip, fill = m)) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  coord_flip() +
+  labs(
+    title = "Bayesian Variable Selection",
+    subtitle = "Posterior inclusion probabilities",
+    x = "Variable",
+    y = "Posterior inclusion probability",
+    fill = "Imputations"
+  ) +
+  theme_minimal(base_size = 16) +
+theme(
+  plot.title = element_text(
+    size = 18,
+    face = "bold",
+    hjust = 0.5
+  ),
+  plot.subtitle = element_text(
+    size = 15,
+    hjust = 0.5
+  ),
+  axis.title = element_text(
+    size = 16,
+    face = "bold"
+  ),
+  axis.text = element_text(
+    size = 16
+  ),
+  legend.title = element_text(
+    size = 15,
+    face = "bold"
+  ),
+  legend.text = element_text(
+    size = 14
+  ),
+  panel.grid.minor = element_blank()
+)
+
+pip_original_plot
+
+ggsave(
+  file.path(fig_path, "bayesian_pip_original_variables.png"),
+  pip_original_plot,
+  width = 14,
+  height = 8,
+  dpi = 300
+)
+
+
+# Create Bayesian forest plot
+
+clean_term <- function(x) {
+  x %>%
+    gsub("^b_", "", .) %>%
+    gsub("^ChestPainType", "ChestPainType: ", .) %>%
+    gsub("^ST_Slope", "ST_Slope: ", .) %>%
+    gsub("^SexM$", "Sex: Male", .) %>%
+    gsub("^FastingBS1$", "FastingBS: Yes", .) %>%
+    gsub("^ExerciseAnginaY$", "ExerciseAngina: Yes", .)
+}
+
+bayesian_forest_plot <- bayesian_results_m10$final_results %>%
+  filter(term != "Intercept") %>%
+  mutate(
+    term = clean_term(term),
+    term = reorder(term, OR)
+  ) %>%
+  ggplot(aes(x = OR, y = term)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = OR_lower, xmax = OR_upper), height = 0.2) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  labs(
+    title = "Bayesian Final Model",
+    subtitle = "Odds ratios with 95% credible intervals for m = 10",
+    x = "Odds Ratio",
+    y = "Variable"
+  ) +
+  theme_minimal()
+
+bayesian_forest_plot
+
+ggsave(
+  file.path(fig_path, "bayesian_forest_plot.png"),
+  bayesian_forest_plot,
+  width = 9,
+  height = 5.5,
+  dpi = 300
+)
+
+# Create predicted probability plot
+
+pred_data <- map_dfr(
+  fits_final_m10,
+  function(fit) {
+    data.frame(
+      observed = fit$data$HeartDisease,
+      predicted = fitted(fit)[, "Estimate"]
+    )
+  }
+) %>%
+  mutate(
+    observed = factor(
+      as.numeric(as.character(observed)),
+      levels = c(0, 1),
+      labels = c("No Disease", "Disease")
+    )
+  )
+
+bayesian_predicted_plot <- ggplot(
+  pred_data,
+  aes(x = predicted, fill = observed)
+) +
+  geom_density(alpha = 0.4) +
+  labs(
+    title = "Bayesian Predicted Probabilities",
+    subtitle = "Final Bayesian model for m = 10",
+    x = "Predicted probability",
+    y = "Density",
+    fill = "Observed outcome"
+  ) +
+  theme_minimal()
+
+bayesian_predicted_plot
+
+ggsave(
+  file.path(fig_path, "bayesian_predicted.png"),
+  bayesian_predicted_plot,
+  width = 9,
+  height = 5.5,
+  dpi = 300
+)
+```
+
+```{r}
+
+# Export Bayesian LaTeX Tables
+
+
+library(knitr)
+
+tables_path <- file.path(output_path, "Tables")
+
+if (!dir.exists(tables_path)) {
+  dir.create(tables_path)
+}
+
+
+# Function: Bayesian regression tables
+
+
+make_latex_bayesian_table <- function(results, caption, filename) {
+  
+  table <- results %>%
+    filter(term != "b_Intercept", term != "Intercept") %>%
+    mutate(
+      term = gsub("^b_", "", term),
+      term = gsub("_", "\\\\_", term),
+      OR = round(OR, 3),
+      OR_lower = round(OR_lower, 3),
+      OR_upper = round(OR_upper, 3),
+      `95\\% CrI` = paste0("(", OR_lower, ", ", OR_upper, ")")
+    ) %>%
+    select(term, OR, `95\\% CrI`) %>%
+    rename(
+      Variable = term,
+      `Odds Ratio` = OR
+    )
+  
+  latex_table <- kable(
+    table,
+    format = "latex",
+    booktabs = FALSE,
+    caption = caption,
+    escape = FALSE,
+    align = "lll"
+  )
+  
+  latex_table <- gsub(
+    "\\\\begin\\{tabular\\}",
+    "\\\\resizebox{\\\\textwidth}{!}{%\n\\\\begin{tabular}",
+    latex_table
+  )
+  
+  latex_table <- gsub(
+    "\\\\end\\{tabular\\}",
+    "\\\\end{tabular}%\n}",
+    latex_table
+  )
+  
+  writeLines(
+    latex_table,
+    con = file.path(tables_path, filename)
+  )
+}
+
+
+# Function: HMC diagnostics tables
+
+
+make_latex_hmc_table <- function(results, caption, filename) {
+  
+  table <- results %>%
+    mutate(
+      variable = gsub("^b_", "", variable),
+      variable = gsub("_", "\\\\_", variable),
+      rhat = round(rhat, 3),
+      ess_bulk = round(ess_bulk, 0),
+      ess_tail = round(ess_tail, 0),
+      mcse_ratio = round(mcse_ratio, 3)
+    ) %>%
+    select(variable, rhat, ess_bulk, ess_tail, mcse_ratio) %>%
+    rename(
+      Parameter = variable,
+      `$\\hat{R}$` = rhat,
+      `Bulk ESS` = ess_bulk,
+      `Tail ESS` = ess_tail,
+      `MCSE/SD` = mcse_ratio
+    )
+  
+  latex_table <- kable(
+    table,
+    format = "latex",
+    booktabs = FALSE,
+    caption = caption,
+    escape = FALSE,
+    align = "lllll"
+  )
+  
+  latex_table <- gsub(
+    "\\\\begin\\{tabular\\}",
+    "\\\\resizebox{\\\\textwidth}{!}{%\n\\\\begin{tabular}",
+    latex_table
+  )
+  
+  latex_table <- gsub(
+    "\\\\end\\{tabular\\}",
+    "\\\\end{tabular}%\n}",
+    latex_table
+  )
+  
+  writeLines(
+    latex_table,
+    con = file.path(tables_path, filename)
+  )
+}
+
+
+# Export Bayesian regression tables
+
+
+make_latex_bayesian_table(
+  bayesian_results_m5$full_results,
+  "Full Bayesian logistic regression results for $m=5$.",
+  "bayes_full_model_m5.tex"
+)
+
+make_latex_bayesian_table(
+  bayesian_results_m10$full_results,
+  "Full Bayesian logistic regression results for $m=10$.",
+  "bayes_full_model_m10.tex"
+)
+
+make_latex_bayesian_table(
+  bayesian_results_m5$final_results,
+  "Final Bayesian logistic regression results for $m=5$.",
+  "bayes_final_model_m5.tex"
+)
+
+make_latex_bayesian_table(
+  bayesian_results_m10$final_results,
+  "Final Bayesian logistic regression results for $m=10$.",
+  "bayes_final_model_m10.tex"
+)
+
+# Export HMC diagnostics tables
+
+
+make_latex_hmc_table(
+  hmc_diagnostics_m5,
+  "HMC convergence diagnostics for the Bayesian model under $m=5$.",
+  "hmc_diagnostics_m5.tex"
+)
+
+make_latex_hmc_table(
+  hmc_diagnostics_m10,
+  "HMC convergence diagnostics for the Bayesian model under $m=10$.",
+  "hmc_diagnostics_m10.tex"
+)
+```
+

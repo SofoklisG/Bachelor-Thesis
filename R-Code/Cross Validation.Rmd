@@ -1,0 +1,926 @@
+---
+title: "Cross Validation"
+output: pdf_document
+date: "2026-05-15"
+---
+
+```{r}
+
+# Load packages, paths, and imputed dataset
+
+library(mice)
+library(dplyr)
+library(purrr)
+library(tibble)
+library(tidyr)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(brms)
+library(posterior)
+
+options(brms.backend = "rstan")
+
+output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+
+cv_results_path <- file.path(
+  output_path,
+  "Results",
+  "Cross Validation"
+)
+
+fig_path <- file.path(output_path, "figures")
+
+if (!dir.exists(cv_results_path)) {
+  dir.create(cv_results_path, recursive = TRUE)
+}
+
+if (!dir.exists(fig_path)) {
+  dir.create(fig_path, recursive = TRUE)
+}
+
+imp_m5 <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
+
+# Use one representative completed dataset from m = 5
+data_cv <- complete(imp_m5, 1)
+
+data_cv <- data_cv %>%
+  mutate(
+    HeartDisease = as.numeric(as.character(HeartDisease))
+  )
+
+```
+
+
+
+```{r}
+# Define final selected model formulas and Bayesian settings
+
+# Final frequentist model
+final_formula_freq <- HeartDisease ~ Age + Sex + ChestPainType +
+  FastingBS + ExerciseAngina + Oldpeak + ST_Slope
+
+# Final Bayesian model
+final_formula_bayes <- HeartDisease ~ Sex + ChestPainType +
+  FastingBS + ExerciseAngina + Oldpeak + ST_Slope
+
+# Priors 
+priors <- c(
+  prior(student_t(7, 0, 2.5), class = "b"),
+  prior(student_t(7, 0, 10), class = "Intercept")
+)
+
+# HMC settings 
+bayes_chains <- 4
+bayes_cores <- min(4, parallel::detectCores())
+bayes_iter <- 800
+bayes_warmup <- 400
+bayes_seed <- 123
+```
+
+
+
+```{r}
+# Create stratified 10-fold cross-validation folds
+
+set.seed(123)
+
+folds <- createFolds(
+  y = factor(data_cv$HeartDisease),
+  k = 10,
+  list = TRUE,
+  returnTrain = FALSE
+)
+
+# Check class distribution in each fold
+fold_distribution <- map_dfr(
+  seq_along(folds),
+  function(i) {
+    
+    test_data <- data_cv[folds[[i]], ]
+    
+    tibble(
+      fold = i,
+      n = nrow(test_data),
+      no_disease = sum(test_data$HeartDisease == 0),
+      disease = sum(test_data$HeartDisease == 1),
+      disease_prevalence = mean(test_data$HeartDisease == 1)
+    )
+  }
+)
+
+fold_distribution
+
+write.csv(
+  fold_distribution,
+  file.path(cv_results_path, "stratified_10_fold_distribution.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Define function for predictive performance metrics
+
+compute_cv_performance <- function(pred_data) {
+  
+  pred_data <- pred_data %>%
+    mutate(
+      predicted_class = ifelse(predicted_probability >= 0.5, 1, 0)
+    )
+  
+  TP <- sum(pred_data$observed == 1 & pred_data$predicted_class == 1)
+  TN <- sum(pred_data$observed == 0 & pred_data$predicted_class == 0)
+  FP <- sum(pred_data$observed == 0 & pred_data$predicted_class == 1)
+  FN <- sum(pred_data$observed == 1 & pred_data$predicted_class == 0)
+  
+  roc_object <- roc(
+    response = pred_data$observed,
+    predictor = pred_data$predicted_probability
+  )
+  
+  tibble(
+    AUC = as.numeric(auc(roc_object)),
+    Accuracy = mean(pred_data$predicted_class == pred_data$observed),
+    Sensitivity = TP / (TP + FN),
+    Specificity = TN / (TN + FP),
+    TP = TP,
+    TN = TN,
+    FP = FP,
+    FN = FN
+  )
+}
+```
+
+```{r}
+# Helper function for Confidence Intervals
+
+mean_ci <- function(x) {
+  
+  x <- x[!is.na(x)]
+  
+  m <- mean(x)
+  se <- sd(x) / sqrt(length(x))
+  
+  c(
+    mean = m,
+    lower = m - 1.96 * se,
+    upper = m + 1.96 * se
+  )
+}
+
+format_mean_ci <- function(x, digits = 3) {
+  
+  ci <- mean_ci(x)
+  
+  paste0(
+    round(ci["mean"], digits),
+    " (",
+    round(ci["lower"], digits),
+    ", ",
+    round(ci["upper"], digits),
+    ")"
+  )
+}
+```
+
+
+```{r}
+# Frequentist stratified 10-fold cross-validation
+
+run_frequentist_cv <- function(data, folds, formula_final) {
+  
+  map_dfr(
+    seq_along(folds),
+    function(i) {
+      
+      test_index <- folds[[i]]
+      
+      train_data <- data[-test_index, ]
+      test_data  <- data[test_index, ]
+      
+      fit <- glm(
+        formula = formula_final,
+        data = train_data,
+        family = binomial
+      )
+      
+      pred_prob <- predict(
+        fit,
+        newdata = test_data,
+        type = "response"
+      )
+      
+      tibble(
+        fold = i,
+        observed = test_data$HeartDisease,
+        predicted_probability = pred_prob,
+        method = "Frequentist"
+      )
+    }
+  )
+}
+
+  
+  freq_cv_predictions <- run_frequentist_cv(
+    data = data_cv,
+    folds = folds,
+    formula_final = final_formula_freq
+  )
+  
+
+freq_cv_predictions
+
+write.csv(
+  freq_cv_predictions,
+  file.path(cv_results_path, "frequentist_10_fold_cv_predictions.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Frequentist cross-validation performance
+
+freq_cv_fold_performance <- freq_cv_predictions %>%
+  group_by(fold) %>%
+  group_modify(~ compute_cv_performance(.x)) %>%
+  ungroup() %>%
+  mutate(method = "Frequentist")
+
+freq_cv_summary <- freq_cv_fold_performance %>%
+  summarise(
+    method = "Frequentist",
+    AUC = format_mean_ci(AUC),
+    Accuracy = format_mean_ci(Accuracy),
+    Sensitivity = format_mean_ci(Sensitivity),
+    Specificity = format_mean_ci(Specificity)
+  )
+
+freq_cv_fold_performance
+freq_cv_summary
+```
+
+```{r}
+# Bayesian stratified 10-fold cross-validation
+
+run_bayesian_cv <- function(data, folds, formula_final) {
+  
+  map_dfr(
+    seq_along(folds),
+    function(i) {
+      
+      cat("\nRunning Bayesian CV fold", i, "of", length(folds), "\n")
+      
+      test_index <- folds[[i]]
+      
+      train_data <- data[-test_index, ]
+      test_data  <- data[test_index, ]
+      
+      fit <- brm(
+        formula = formula_final,
+        data = train_data,
+        family = bernoulli(link = "logit"),
+        prior = priors,
+        chains = bayes_chains,
+        iter = bayes_iter,
+        warmup = bayes_warmup,
+        cores = bayes_cores,
+        seed = bayes_seed,
+        control = list(adapt_delta = 0.95),
+        refresh = 0
+      )
+      
+      pred_prob <- fitted(
+        fit,
+        newdata = test_data
+      )[, "Estimate"]
+      
+      tibble(
+        fold = i,
+        observed = test_data$HeartDisease,
+        predicted_probability = pred_prob,
+        method = "Bayesian"
+      )
+    }
+  )
+}
+
+bayes_10fold_time <- system.time({
+  
+  bayes_cv_predictions <- run_bayesian_cv(
+    data = data_cv,
+    folds = folds,
+    formula_final = final_formula_bayes
+  )
+  
+})
+
+bayes_10fold_time
+bayes_cv_predictions
+
+write.csv(
+  bayes_cv_predictions,
+  file.path(cv_results_path, "bayesian_10_fold_cv_predictions.csv"),
+  row.names = FALSE
+)
+```
+
+```{r}
+# Bayesian cross-validation performance
+
+bayes_cv_fold_performance <- bayes_cv_predictions %>%
+  group_by(fold) %>%
+  group_modify(~ compute_cv_performance(.x)) %>%
+  ungroup() %>%
+  mutate(method = "Bayesian")
+
+bayes_cv_summary <- bayes_cv_fold_performance %>%
+  summarise(
+    method = "Bayesian",
+    AUC = format_mean_ci(AUC),
+    Accuracy = format_mean_ci(Accuracy),
+    Sensitivity = format_mean_ci(Sensitivity),
+    Specificity = format_mean_ci(Specificity)
+  )
+
+bayes_cv_fold_performance
+bayes_cv_summary
+```
+
+```{r}
+# Combine frequentist and Bayesian cross-validation results
+
+cv_predictions_all <- bind_rows(
+  freq_cv_predictions,
+  bayes_cv_predictions
+)
+
+cv_fold_performance_all <- bind_rows(
+  freq_cv_fold_performance,
+  bayes_cv_fold_performance
+)
+
+cv_summary_all <- bind_rows(
+  freq_cv_summary,
+  bayes_cv_summary
+)
+
+cv_predictions_all
+cv_fold_performance_all
+cv_summary_all
+
+write.csv(
+  cv_predictions_all,
+  file.path(cv_results_path, "stratified_10_fold_cv_predictions_all.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  cv_fold_performance_all,
+  file.path(cv_results_path, "stratified_10_fold_cv_fold_performance.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  cv_summary_all,
+  file.path(cv_results_path, "stratified_10_fold_cv_summary_CI.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# ROC curves from held-out cross-validation predictions
+
+roc_freq_cv <- roc(
+  response = freq_cv_predictions$observed,
+  predictor = freq_cv_predictions$predicted_probability
+)
+
+roc_bayes_cv <- roc(
+  response = bayes_cv_predictions$observed,
+  predictor = bayes_cv_predictions$predicted_probability
+)
+
+# Convert ROC objects to data frames
+
+roc_freq_df <- tibble(
+  FalsePositiveRate = 1 - roc_freq_cv$specificities,
+  TruePositiveRate = roc_freq_cv$sensitivities
+)
+
+roc_bayes_df <- tibble(
+  FalsePositiveRate = 1 - roc_bayes_cv$specificities,
+  TruePositiveRate = roc_bayes_cv$sensitivities
+)
+
+# AUC values
+
+auc_freq <- round(as.numeric(auc(roc_freq_cv)), 3)
+auc_bayes <- round(as.numeric(auc(roc_bayes_cv)), 3)
+
+# =========================================================
+# Frequentist ROC curve
+# =========================================================
+
+freq_roc_plot <- ggplot(
+  roc_freq_df,
+  aes(
+    x = FalsePositiveRate,
+    y = TruePositiveRate
+  )
+) +
+  
+  geom_line(
+    linewidth = 1.4,
+    colour = "black"
+  ) +
+  
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed",
+    colour = "grey60"
+  ) +
+  
+  coord_cartesian(
+    xlim = c(0, 1),
+    ylim = c(0, 1)
+  ) +
+  
+  labs(
+    title = "Frequentist ROC Curve",
+    subtitle = paste0(
+      "Stratified 10-Fold Cross-Validation (AUC = ",
+      auc_freq,
+      ")"
+    ),
+    x = "1 - Specificity",
+    y = "Sensitivity"
+  ) +
+  
+  theme_minimal(base_size = 15) +
+  
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 18
+    ),
+    
+    plot.subtitle = element_text(
+      size = 14
+    ),
+    
+    axis.title = element_text(
+      face = "bold",
+      size = 15
+    ),
+    
+    axis.text = element_text(
+      size = 13
+    ),
+    
+    panel.grid.minor = element_blank()
+  )
+
+freq_roc_plot
+
+ggsave(
+  filename = file.path(
+    fig_path,
+    "frequentist_cv_roc_curve.png"
+  ),
+  plot = freq_roc_plot,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+
+# =========================================================
+# Bayesian ROC curve
+# =========================================================
+
+bayes_roc_plot <- ggplot(
+  roc_bayes_df,
+  aes(
+    x = FalsePositiveRate,
+    y = TruePositiveRate
+  )
+) +
+  
+  geom_line(
+    linewidth = 1.4,
+    colour = "black"
+  ) +
+  
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed",
+    colour = "grey60"
+  ) +
+  
+  coord_cartesian(
+    xlim = c(0, 1),
+    ylim = c(0, 1)
+  ) +
+  
+  labs(
+    title = "Bayesian ROC Curve",
+    subtitle = paste0(
+      "Stratified 10-Fold Cross-Validation (AUC = ",
+      auc_bayes,
+      ")"
+    ),
+    x = "1 - Specificity",
+    y = "Sensitivity"
+  ) +
+  
+  theme_minimal(base_size = 15) +
+  
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 18
+    ),
+    
+    plot.subtitle = element_text(
+      size = 14
+    ),
+    
+    axis.title = element_text(
+      face = "bold",
+      size = 15
+    ),
+    
+    axis.text = element_text(
+      size = 13
+    ),
+    
+    panel.grid.minor = element_blank()
+  )
+
+bayes_roc_plot
+
+ggsave(
+  filename = file.path(
+    fig_path,
+    "bayesian_cv_roc_curve.png"
+  ),
+  plot = bayes_roc_plot,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+```
+
+
+```{r}
+# Export LaTeX table for report
+
+library(knitr)
+library(kableExtra)
+
+latex_cv_table <- cv_summary_all %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    escape = FALSE,
+    caption = "Predictive performance under stratified 10-fold cross-validation. Values are reported as mean with 95\\% confidence intervals across folds.",
+    align = "lcccc"
+  )
+
+writeLines(
+  latex_cv_table,
+  con = file.path(cv_results_path, "stratified_10_fold_cv_table.tex")
+)
+```
+
+
+
+
+```{r}
+# Function for frequentist k-fold and LOO cross-validation
+
+run_frequentist_cv_comparison <- function(data, formula_final, k = NULL, method_name) {
+  
+  if (!is.null(k)) {
+    
+    set.seed(123)
+    
+    folds <- createFolds(
+      y = factor(data$HeartDisease),
+      k = k,
+      list = TRUE,
+      returnTrain = FALSE
+    )
+    
+  } else {
+    
+    folds <- as.list(seq_len(nrow(data)))
+  }
+  
+  predictions <- map_dfr(
+    seq_along(folds),
+    function(i) {
+      
+      test_index <- folds[[i]]
+      
+      train_data <- data[-test_index, ]
+      test_data  <- data[test_index, ]
+      
+      fit <- glm(
+        formula = formula_final,
+        data = train_data,
+        family = binomial
+      )
+      
+      pred_prob <- predict(
+        fit,
+        newdata = test_data,
+        type = "response"
+      )
+      
+      tibble(
+        fold = i,
+        observed = test_data$HeartDisease,
+        predicted_probability = pred_prob,
+        method = method_name
+      )
+    }
+  )
+  
+  predictions
+}
+```
+
+
+```{r}
+# Run frequentist 5-fold, 10-fold, and LOO cross-validation 
+
+  
+  freq_cv_5_predictions <- run_frequentist_cv_comparison(
+    data = data_cv,
+    formula_final = final_formula_freq,
+    k = 5,
+    method_name = "5-fold CV"
+  )
+  
+  
+  freq_cv_10_predictions <- run_frequentist_cv_comparison(
+    data = data_cv,
+    formula_final = final_formula_freq,
+    k = 10,
+    method_name = "10-fold CV"
+  )
+ 
+
+
+  
+  freq_cv_loo_predictions <- run_frequentist_cv_comparison(
+    data = data_cv,
+    formula_final = final_formula_freq,
+    k = NULL,
+    method_name = "LOO CV"
+  )
+  
+
+freq_cv_5_predictions
+freq_cv_10_predictions
+freq_cv_loo_predictions
+```
+
+
+```{r}
+# Fold-wise performance for 5-fold and 10-fold CV
+
+freq_cv_5_fold_performance <- freq_cv_5_predictions %>%
+  group_by(fold) %>%
+  group_modify(~ compute_cv_performance(.x)) %>%
+  ungroup() %>%
+  mutate(CV_Method = "5-fold CV")
+
+freq_cv_10_fold_performance <- freq_cv_10_predictions %>%
+  group_by(fold) %>%
+  group_modify(~ compute_cv_performance(.x)) %>%
+  ungroup() %>%
+  mutate(CV_Method = "10-fold CV")
+
+freq_cv_5_fold_performance
+freq_cv_10_fold_performance
+```
+
+```{r}
+# Mean with 95% CI summaries for 5-fold and 10-fold CV
+
+summarise_cv_mean_ci <- function(fold_performance, method_name) {
+  
+  fold_performance %>%
+    summarise(
+      CV_Method = method_name,
+      AUC = format_mean_ci(AUC),
+      Accuracy = format_mean_ci(Accuracy),
+      Sensitivity = format_mean_ci(Sensitivity),
+      Specificity = format_mean_ci(Specificity)
+    )
+}
+
+freq_cv_5_summary <- summarise_cv_mean_ci(
+  freq_cv_5_fold_performance,
+  "5-fold CV"
+)
+
+freq_cv_10_summary <- summarise_cv_mean_ci(
+  freq_cv_10_fold_performance,
+  "10-fold CV"
+)
+
+freq_cv_5_summary
+freq_cv_10_summary
+```
+```{r}
+# Overall LOO performance
+
+freq_cv_loo_performance <- compute_cv_performance(
+  freq_cv_loo_predictions
+)
+
+freq_cv_loo_summary <- freq_cv_loo_performance %>%
+  transmute(
+    CV_Method = "LOO CV",
+    AUC = as.character(round(AUC, 3)),
+    Accuracy = as.character(round(Accuracy, 3)),
+    Sensitivity = as.character(round(Sensitivity, 3)),
+    Specificity = as.character(round(Specificity, 3))
+  )
+
+freq_cv_loo_performance
+freq_cv_loo_summary
+```
+```{r}
+# Combine 5-fold, 10-fold, and LOO CV results
+
+freq_cv_method_comparison <- bind_rows(
+  freq_cv_5_summary,
+  freq_cv_10_summary,
+  freq_cv_loo_summary
+)
+
+freq_cv_method_comparison
+
+write.csv(
+  freq_cv_method_comparison,
+  file.path(
+    cv_results_path,
+    "frequentist_5fold_10fold_loo_cv_comparison.csv"
+  ),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Save fold-wise performance for 5-fold and 10-fold CV
+
+freq_cv_fold_performance_comparison <- bind_rows(
+  freq_cv_5_fold_performance,
+  freq_cv_10_fold_performance
+)
+
+write.csv(
+  freq_cv_fold_performance_comparison,
+  file.path(
+    cv_results_path,
+    "frequentist_5fold_10fold_fold_performance.csv"
+  ),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Cross-validation runtime stability
+
+n_time_runs <- 5
+
+time_freq_10fold_cv <- function(run_id) {
+  
+  set.seed(1000 + run_id)
+  
+  time_out <- system.time({
+    run_frequentist_cv(
+      data = data_cv,
+      folds = folds,
+      formula_final = final_formula_freq
+    )
+  })
+  
+  tibble(
+    Procedure = "Frequentist stratified 10-fold CV",
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_bayes_10fold_cv <- function(run_id) {
+  
+  set.seed(1000 + run_id)
+  
+  time_out <- system.time({
+    run_bayesian_cv(
+      data = data_cv,
+      folds = folds,
+      formula_final = final_formula_bayes
+    )
+  })
+  
+  tibble(
+    Procedure = "Bayesian stratified 10-fold CV",
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_freq_cv_comparison <- function(run_id, k_value, method_name) {
+  
+  set.seed(1000 + run_id)
+  
+  time_out <- system.time({
+    run_frequentist_cv_comparison(
+      data = data_cv,
+      formula_final = final_formula_freq,
+      k = k_value,
+      method_name = method_name
+    )
+  })
+  
+  tibble(
+    Procedure = method_name,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+cv_runtime_stability_raw <- bind_rows(
+  map_dfr(1:n_time_runs, time_freq_10fold_cv),
+  map_dfr(1:n_time_runs, time_bayes_10fold_cv),
+  map_dfr(1:n_time_runs, ~ time_freq_cv_comparison(.x, 5, "Frequentist 5-fold CV")),
+  map_dfr(1:n_time_runs, ~ time_freq_cv_comparison(.x, 10, "Frequentist 10-fold CV")),
+  map_dfr(1:n_time_runs, ~ time_freq_cv_comparison(.x, NULL, "Frequentist LOO CV"))
+)
+
+cv_runtime_stability_summary <- cv_runtime_stability_raw %>%
+  group_by(Procedure) %>%
+  summarise(
+    Mean_Runtime = paste0(
+      round(mean(elapsed_time_seconds, na.rm = TRUE), 3),
+      " ± ",
+      round(sd(elapsed_time_seconds, na.rm = TRUE), 3),
+      " sec"
+    ),
+    .groups = "drop"
+  )
+
+cv_runtime_stability_summary
+
+write.csv(
+  cv_runtime_stability_raw,
+  file.path(cv_results_path, "cross_validation_runtime_stability_raw.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  cv_runtime_stability_summary,
+  file.path(cv_results_path, "cross_validation_runtime_stability_summary.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Export LaTeX table for frequentist CV comparison
+
+library(knitr)
+library(kableExtra)
+
+latex_freq_cv_method_table <- freq_cv_method_comparison %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    escape = FALSE,
+    caption = "Predictive performance under stratified 10-fold cross-validation. Values are reported as mean with 95\\% confidence intervals across folds.",
+    align = "lcccc"
+  )
+
+writeLines(
+  latex_freq_cv_method_table,
+  con = file.path(
+    cv_results_path,
+    "frequentist_5fold_10fold_loo_cv_comparison.tex"
+  )
+)
+```
+

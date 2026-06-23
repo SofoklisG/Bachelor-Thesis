@@ -1,0 +1,1053 @@
+---
+title: "Frequentist Logistic Regression"
+output: pdf_document
+date: "2026-04-20"
+---
+
+```{r}
+# Load packages, paths, and imputed datasets
+
+library(mice)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(grid)
+library(pROC)
+library(caret)
+library(purrr)
+
+output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+
+# Results path
+
+freq_results_path <- file.path(
+  output_path,
+  "Results",
+  "Frequentist Approach",
+  "Pooling results"
+)
+
+fig_path <- file.path(output_path, "figures")
+tables_path <- file.path(output_path, "Tables")
+
+if (!dir.exists(fig_path)) {
+  dir.create(fig_path)
+}
+
+if (!dir.exists(tables_path)) {
+  dir.create(tables_path)
+}
+
+imp_m5 <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
+imp_m10 <- readRDS(file.path(output_path, "imputed_data_m10.rds"))
+imp_m20 <- readRDS(file.path(output_path, "imputed_data_m20.rds"))
+
+
+```
+
+
+
+```{r}
+# Define predictors and significance-star function 
+
+predictors_full <- c(
+  "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
+  "FastingBS", "RestingECG", "MaxHR", "ExerciseAngina",
+  "Oldpeak", "ST_Slope"
+)
+
+add_significance_stars <- function(results) {
+  results %>%
+    mutate(
+      significance = case_when(
+        p.value < 0.001 ~ "***",
+        p.value < 0.01  ~ "**",
+        p.value < 0.05  ~ "*",
+        TRUE            ~ ""
+      ),
+      OR_with_stars = paste0(round(estimate, 2), significance)
+    )
+}
+```
+
+
+```{r}
+# Define functions for pooled frequentist models
+
+fit_full_pooled_model <- function(imp_object) {
+  
+  fit <- with(
+    data = imp_object,
+    expr = glm(
+      HeartDisease ~ Age + Sex + ChestPainType + RestingBP + Cholesterol +
+        FastingBS + RestingECG + MaxHR + ExerciseAngina + Oldpeak + ST_Slope,
+      family = binomial
+    )
+  )
+  
+  pooled_fit <- pool(fit)
+  
+  summary(
+    pooled_fit,
+    conf.int = TRUE,
+    exponentiate = TRUE
+  ) %>%
+    add_significance_stars()
+}
+
+fit_pool_model <- function(imp_object, predictors) {
+  
+  form <- as.formula(
+    paste("HeartDisease ~", paste(predictors, collapse = " + "))
+  )
+  
+  completed_data <- complete(imp_object, action = "all")
+  
+  fit_list <- lapply(completed_data, function(dat) {
+    glm(form, data = dat, family = binomial)
+  })
+  
+  fit <- as.mira(fit_list)
+  pooled <- pool(fit)
+  
+  results <- summary(
+    pooled,
+    conf.int = TRUE,
+    exponentiate = TRUE
+  ) %>%
+    add_significance_stars()
+  
+  results_sorted <- results %>%
+    filter(term != "(Intercept)") %>%
+    arrange(desc(p.value))
+  
+  list(
+    formula = form,
+    fit = fit,
+    pooled = pooled,
+    results = results,
+    results_sorted = results_sorted
+  )
+}
+```
+
+
+
+```{r}
+# Define backward selection using pooled p-values
+
+get_base_predictor <- function(term) {
+  case_when(
+    grepl("^ChestPainType", term) ~ "ChestPainType",
+    grepl("^RestingECG", term) ~ "RestingECG",
+    grepl("^ST_Slope", term) ~ "ST_Slope",
+    grepl("^Sex", term) ~ "Sex",
+    grepl("^FastingBS", term) ~ "FastingBS",
+    grepl("^ExerciseAngina", term) ~ "ExerciseAngina",
+    TRUE ~ term
+  )
+}
+
+backward_selection_pooled <- function(imp_object, predictors, p_cutoff = 0.05) {
+  
+  current_predictors <- predictors
+  removed_variables <- c()
+  selection_steps <- data.frame()
+  step <- 0
+  
+  repeat {
+    step <- step + 1
+    
+    model_out <- fit_pool_model(imp_object, current_predictors)
+    res_sorted <- model_out$results_sorted
+    
+    worst_term <- res_sorted$term[1]
+    worst_p <- res_sorted$p.value[1]
+    remove_var <- get_base_predictor(worst_term)
+    
+    selection_steps <- rbind(
+      selection_steps,
+      data.frame(
+        step = step,
+        model_formula = paste(deparse(model_out$formula), collapse = ""),
+        worst_term = worst_term,
+        removed_candidate = remove_var,
+        p_value = worst_p,
+        predictors_before_removal = paste(current_predictors, collapse = ", ")
+      )
+    )
+    
+    cat("\nStep", step, "\n")
+    cat("Formula:", deparse(model_out$formula), "\n")
+    cat("Worst term:", worst_term, "\n")
+    cat("P-value:", worst_p, "\n")
+    
+    if (worst_p <= p_cutoff) {
+      cat("Stopping: all remaining terms have p <=", p_cutoff, "\n")
+      break
+    }
+    
+    cat("Removed variable:", remove_var, "\n")
+    
+    removed_variables <- c(removed_variables, remove_var)
+    current_predictors <- setdiff(current_predictors, remove_var)
+  }
+  
+  final_model <- fit_pool_model(imp_object, current_predictors)
+  
+  list(
+    final_predictors = current_predictors,
+    removed_variables = removed_variables,
+    selection_steps = selection_steps,
+    final_model = final_model
+  )
+}
+```
+
+
+```{r}
+# Fit full frequentist models 
+
+results_full_m5 <- fit_full_pooled_model(imp_m5)
+
+results_full_m10 <- fit_full_pooled_model(imp_m10)
+
+results_full_m20 <- fit_full_pooled_model(imp_m20)
+
+results_full_m5
+results_full_m10
+results_full_m20
+```
+
+
+
+```{r}
+# Run backward selection 
+
+bw_manual_m5 <- backward_selection_pooled(
+    imp_object = imp_m5,
+    predictors = predictors_full,
+    p_cutoff = 0.05
+  )
+  
+
+bw_manual_m10 <- backward_selection_pooled(
+    imp_object = imp_m10,
+    predictors = predictors_full,
+    p_cutoff = 0.05
+  )
+  
+bw_manual_m20 <- backward_selection_pooled(
+    imp_object = imp_m20,
+    predictors = predictors_full,
+    p_cutoff = 0.05
+  )
+
+```
+
+
+```{r}
+# Inspect backward selection results
+
+bw_manual_m5$selection_steps
+bw_manual_m5$final_predictors
+bw_manual_m5$final_model$results
+
+bw_manual_m10$selection_steps
+bw_manual_m10$final_predictors
+bw_manual_m10$final_model$results
+
+bw_manual_m20$selection_steps
+bw_manual_m20$final_predictors
+bw_manual_m20$final_model$results
+```
+
+
+
+```{r}
+# Save full model and selected model results
+
+write.csv(
+  results_full_m5,
+  file.path(freq_results_path, "frequentist_full_results_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  results_full_m10,
+  file.path(freq_results_path, "frequentist_full_results_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  results_full_m20,
+  file.path(freq_results_path, "frequentist_full_results_m20.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bw_manual_m5$selection_steps,
+  file.path(freq_results_path, "backward_selection_steps_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bw_manual_m10$selection_steps,
+  file.path(freq_results_path, "backward_selection_steps_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bw_manual_m20$selection_steps,
+  file.path(freq_results_path, "backward_selection_steps_m20.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bw_manual_m5$final_model$results,
+  file.path(freq_results_path, "frequentist_selected_results_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bw_manual_m10$final_model$results,
+  file.path(freq_results_path, "frequentist_selected_results_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  bw_manual_m20$final_model$results,
+  file.path(freq_results_path, "frequentist_selected_results_m20.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Compare final selected models across imputations
+
+extract_final_summary <- function(bw_object, m_value) {
+  
+  final_results <- bw_object$final_model$results
+  removed_vars <- setdiff(predictors_full, bw_object$final_predictors)
+  
+  final_results %>%
+    mutate(
+      m = m_value,
+      selected_variables = paste(bw_object$final_predictors, collapse = ", "),
+      number_selected_variables = length(bw_object$final_predictors),
+      removed_variables = paste(removed_vars, collapse = ", "),
+      number_removed_variables = length(removed_vars)
+    )
+}
+
+comparison_final_results <- bind_rows(
+  extract_final_summary(bw_manual_m5, 5),
+  extract_final_summary(bw_manual_m10, 10),
+  extract_final_summary(bw_manual_m20, 20)
+) %>%
+  select(
+    m,
+    term,
+    estimate,
+    OR_with_stars,
+    std.error,
+    statistic,
+    df,
+    p.value,
+    significance,
+    conf.low,
+    conf.high,
+    selected_variables,
+    number_selected_variables,
+    removed_variables,
+    number_removed_variables
+  )
+
+comparison_final_results
+
+write.csv(
+  comparison_final_results,
+  file.path(freq_results_path, "comparison_final_results_m5_m10_m20.csv"),
+  row.names = FALSE
+)
+```
+```{r}
+# Compare backward selection steps across imputations
+
+extract_selection_summary <- function(bw_object, m_value) {
+  
+  bw_object$selection_steps %>%
+    mutate(m = m_value) %>%
+    select(
+      m,
+      step,
+      worst_term,
+      removed_candidate,
+      p_value,
+      predictors_before_removal
+    )
+}
+
+comparison_selection_steps <- bind_rows(
+  extract_selection_summary(bw_manual_m5, 5),
+  extract_selection_summary(bw_manual_m10, 10),
+  extract_selection_summary(bw_manual_m20, 20)
+)
+
+comparison_selection_steps
+
+write.csv(
+  comparison_selection_steps,
+  file.path(freq_results_path, "comparison_selection_steps_m5_m10_m20.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Compute predicted probabilities for final frequentist models
+
+get_frequentist_predicted_probabilities <- function(bw_object, imp_object, m_value) {
+  
+  final_formula <- bw_object$final_model$formula
+  completed_data <- mice::complete(imp_object, action = "all")
+  
+  pred_data <- lapply(seq_along(completed_data), function(i) {
+    
+    dat <- completed_data[[i]]
+    
+    fit <- glm(
+      formula = final_formula,
+      data = dat,
+      family = binomial
+    )
+    
+    data.frame(
+      imputation = i,
+      m = m_value,
+      observed = dat$HeartDisease,
+      predicted_probability = predict(fit, type = "response")
+    )
+  })
+  
+  bind_rows(pred_data)
+}
+
+
+freq_pred_m5 <- get_frequentist_predicted_probabilities(
+    bw_manual_m5,
+    imp_m5,
+    5
+  )
+  
+
+freq_pred_m10 <- get_frequentist_predicted_probabilities(
+    bw_manual_m10,
+    imp_m10,
+    10
+  )
+  
+
+freq_pred_m20 <- get_frequentist_predicted_probabilities(
+    bw_manual_m20,
+    imp_m20,
+    20
+  )
+  
+
+freq_pred_all <- bind_rows(
+  freq_pred_m5,
+  freq_pred_m10,
+  freq_pred_m20
+)
+
+freq_pred_all
+```
+
+```{r}
+# Average frequentist predicted probabilities across imputations
+
+average_frequentist_predictions <- function(pred_data, m_value) {
+  
+  pred_data %>%
+    group_by(imputation) %>%
+    mutate(observation = row_number()) %>%
+    ungroup() %>%
+    group_by(observation, observed) %>%
+    summarise(
+      predicted_probability = mean(predicted_probability),
+      .groups = "drop"
+    ) %>%
+    mutate(m = m_value)
+}
+
+freq_pred_avg_m5 <- average_frequentist_predictions(freq_pred_m5, 5)
+freq_pred_avg_m10 <- average_frequentist_predictions(freq_pred_m10, 10)
+freq_pred_avg_m20 <- average_frequentist_predictions(freq_pred_m20, 20)
+
+write.csv(
+  freq_pred_avg_m5,
+  file.path(freq_results_path, "frequentist_predicted_probabilities_avg_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_pred_avg_m10,
+  file.path(freq_results_path, "frequentist_predicted_probabilities_avg_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_pred_avg_m20,
+  file.path(freq_results_path, "frequentist_predicted_probabilities_avg_m20.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Frequentist runtime stability: mean ± SD over repeated runs
+
+n_time_runs <- 5
+
+time_frequentist_full_model <- function(run_id, imp_object, m_value) {
+  
+  time_out <- system.time({
+    fit_full_pooled_model(imp_object)
+  })
+  
+  tibble(
+    procedure = "Full model",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_frequentist_backward_selection <- function(run_id, imp_object, m_value) {
+  
+  time_out <- system.time({
+    backward_selection_pooled(
+      imp_object = imp_object,
+      predictors = predictors_full,
+      p_cutoff = 0.05
+    )
+  })
+  
+  tibble(
+    procedure = "Backward selection",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_frequentist_final_model <- function(run_id, bw_object, imp_object, m_value) {
+  
+  time_out <- system.time({
+    fit_pool_model(
+      imp_object = imp_object,
+      predictors = bw_object$final_predictors
+    )
+  })
+  
+  tibble(
+    procedure = "Final selected model",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+time_frequentist_prediction <- function(run_id, bw_object, imp_object, m_value) {
+  
+  time_out <- system.time({
+    get_frequentist_predicted_probabilities(
+      bw_object = bw_object,
+      imp_object = imp_object,
+      m_value = m_value
+    )
+  })
+  
+  tibble(
+    procedure = "Predicted probabilities",
+    m = m_value,
+    run = run_id,
+    elapsed_time_seconds = as.numeric(time_out["elapsed"])
+  )
+}
+
+freq_runtime_stability_raw <- bind_rows(
+  
+  map_dfr(1:n_time_runs, ~ time_frequentist_full_model(.x, imp_m5, 5)),
+  
+  map_dfr(1:n_time_runs, ~ time_frequentist_backward_selection(.x, imp_m5, 5)),
+  
+  map_dfr(1:n_time_runs, ~ time_frequentist_final_model(.x, bw_manual_m5, imp_m5, 5)),
+  
+  map_dfr(1:n_time_runs, ~ time_frequentist_prediction(.x, bw_manual_m5, imp_m5, 5))
+)
+
+freq_runtime_stability_summary <- freq_runtime_stability_raw %>%
+  group_by(procedure, m) %>%
+  summarise(
+    Mean_Runtime = paste0(
+      round(mean(elapsed_time_seconds, na.rm = TRUE), 3),
+      " ± ",
+      round(sd(elapsed_time_seconds, na.rm = TRUE), 3),
+      " sec"
+    ),
+    .groups = "drop"
+  )
+
+freq_runtime_stability_summary
+
+write.csv(
+  freq_runtime_stability_raw,
+  file.path(freq_results_path, "frequentist_runtime_stability_raw.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_runtime_stability_summary,
+  file.path(freq_results_path, "frequentist_runtime_stability_summary.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Save frequentist predicted probabilities
+
+write.csv(
+  freq_pred_m5,
+  file.path(freq_results_path, "frequentist_predicted_probabilities_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_pred_m10,
+  file.path(freq_results_path, "frequentist_predicted_probabilities_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_pred_m20,
+  file.path(freq_results_path, "frequentist_predicted_probabilities_m20.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_pred_all,
+  file.path(freq_results_path, "frequentist_predicted_probabilities_all.csv"),
+  row.names = FALSE
+)
+```
+
+
+```{r}
+# Plot frequentist predicted probabilities for m = 10
+
+freq_pred_plot_m10 <- freq_pred_m10 %>%
+  mutate(
+    observed = factor(
+      observed,
+      levels = c(0, 1),
+      labels = c("No Disease", "Disease")
+    )
+  ) %>%
+  ggplot(aes(x = predicted_probability, fill = observed)) +
+  geom_density(alpha = 0.4) +
+  labs(
+    title = "Frequentist Predicted Probabilities",
+    subtitle = "Final frequentist logistic regression model for m = 10",
+    x = "Predicted probability",
+    y = "Density",
+    fill = "Observed outcome"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+freq_pred_plot_m10
+
+ggsave(
+  filename = file.path(fig_path, "frequentist_predicted_probabilities_m10.png"),
+  plot = freq_pred_plot_m10,
+  width = 9,
+  height = 5.5,
+  dpi = 300
+)
+```
+
+```{r}
+
+# Frequentist predictive performance with 95% confidence intervals
+
+compute_frequentist_performance_by_imputation <- function(pred_data, m_value) {
+  
+  pred_data <- pred_data %>%
+    mutate(
+      observed = as.numeric(as.character(observed)),
+      predicted_class = ifelse(predicted_probability >= 0.5, 1, 0)
+    )
+  
+  pred_data %>%
+    group_by(imputation) %>%
+    summarise(
+      AUC = as.numeric(
+        auc(
+          roc(
+            response = observed,
+            predictor = predicted_probability,
+            quiet = TRUE
+          )
+        )
+      ),
+      Accuracy = mean(predicted_class == observed),
+      
+      TP = sum(predicted_class == 1 & observed == 1),
+      TN = sum(predicted_class == 0 & observed == 0),
+      FP = sum(predicted_class == 1 & observed == 0),
+      FN = sum(predicted_class == 0 & observed == 1),
+      
+      Sensitivity = ifelse((TP + FN) == 0, NA, TP / (TP + FN)),
+      Specificity = ifelse((TN + FP) == 0, NA, TN / (TN + FP)),
+      
+      .groups = "drop"
+    ) %>%
+    mutate(m = m_value)
+}
+
+
+mean_ci <- function(x) {
+  
+  x <- x[!is.na(x)]
+  
+  m <- mean(x)
+  se <- sd(x) / sqrt(length(x))
+  
+  c(
+    mean = m,
+    lower = m - 1.96 * se,
+    upper = m + 1.96 * se
+  )
+}
+
+
+summarise_frequentist_performance <- function(performance_by_imp, m_value) {
+  
+  performance_by_imp %>%
+    summarise(
+      m = m_value,
+      n_imputations = n(),
+      
+      AUC_mean = mean_ci(AUC)["mean"],
+      AUC_lower = mean_ci(AUC)["lower"],
+      AUC_upper = mean_ci(AUC)["upper"],
+      
+      Accuracy_mean = mean_ci(Accuracy)["mean"],
+      Accuracy_lower = mean_ci(Accuracy)["lower"],
+      Accuracy_upper = mean_ci(Accuracy)["upper"],
+      
+      Sensitivity_mean = mean_ci(Sensitivity)["mean"],
+      Sensitivity_lower = mean_ci(Sensitivity)["lower"],
+      Sensitivity_upper = mean_ci(Sensitivity)["upper"],
+      
+      Specificity_mean = mean_ci(Specificity)["mean"],
+      Specificity_lower = mean_ci(Specificity)["lower"],
+      Specificity_upper = mean_ci(Specificity)["upper"]
+    )
+}
+
+# Compute performance for each imputed dataset
+
+freq_performance_by_imp_m5 <- compute_frequentist_performance_by_imputation(
+  pred_data = freq_pred_m5,
+  m_value = 5
+)
+
+freq_performance_by_imp_m10 <- compute_frequentist_performance_by_imputation(
+  pred_data = freq_pred_m10,
+  m_value = 10
+)
+
+freq_performance_by_imp_m20 <- compute_frequentist_performance_by_imputation(
+  pred_data = freq_pred_m20,
+  m_value = 20
+)
+
+
+# Summarise mean performance with 95% confidence intervals
+
+freq_performance_summary_m5 <- summarise_frequentist_performance(
+  freq_performance_by_imp_m5,
+  m_value = 5
+)
+
+freq_performance_summary_m10 <- summarise_frequentist_performance(
+  freq_performance_by_imp_m10,
+  m_value = 10
+)
+
+freq_performance_summary_m20 <- summarise_frequentist_performance(
+  freq_performance_by_imp_m20,
+  m_value = 20
+)
+
+
+freq_performance_results <- bind_rows(
+  freq_performance_summary_m5,
+  freq_performance_summary_m10,
+  freq_performance_summary_m20
+)
+
+freq_performance_results
+```
+
+
+```{r}
+# Plot ROC curve for m = 10
+
+freq_roc_m10 <- roc(
+  response = freq_pred_avg_m10$observed,
+  predictor = freq_pred_avg_m10$predicted_probability,
+  quiet = TRUE
+)
+
+roc_plot_freq_m10 <- ggroc(
+  freq_roc_m10,
+  legacy.axes = TRUE,
+  linewidth = 1.4
+) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed",
+    colour = "grey60"
+  ) +
+  labs(
+    title = "Frequentist ROC Curve",
+    subtitle = paste0(
+      "Final frequentist model for m = 10 (AUC = ",
+      round(freq_performance_summary_m10$AUC_mean, 3),
+      ")"
+    ),
+    x = "1 - Specificity",
+    y = "Sensitivity"
+  ) +
+  coord_cartesian(
+    xlim = c(0, 1),
+    ylim = c(0, 1)
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 18
+    ),
+    
+    plot.subtitle = element_text(
+      size = 14
+    ),
+    
+    axis.title = element_text(
+      face = "bold",
+      size = 15
+    ),
+    
+    axis.text = element_text(
+      size = 13
+    ),
+    
+    panel.grid.minor = element_blank()
+  )
+
+roc_plot_freq_m10
+
+ggsave(
+  filename = file.path(
+    fig_path,
+    "frequentist_roc_curve_m10.png"
+  ),
+  plot = roc_plot_freq_m10,
+  width = 8,
+  height = 5.5,
+  dpi = 300
+)
+```
+
+
+```{r}
+# Save frequentist predictive performance results
+
+write.csv(
+  freq_performance_by_imp_m5,
+  file.path(freq_results_path, "frequentist_predictive_performance_by_imputation_m5.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_performance_by_imp_m10,
+  file.path(freq_results_path, "frequentist_predictive_performance_by_imputation_m10.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_performance_by_imp_m20,
+  file.path(freq_results_path, "frequentist_predictive_performance_by_imputation_m20.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  freq_performance_results,
+  file.path(freq_results_path, "frequentist_predictive_performance_summary_CI.csv"),
+  row.names = FALSE
+)
+```
+
+
+
+```{r}
+# Create frequentist plots
+
+selection_plot_data <- comparison_selection_steps %>%
+  mutate(
+    m = factor(m, levels = c(5, 10, 20)),
+    removed_candidate = factor(
+      removed_candidate,
+      levels = unique(removed_candidate)
+    ),
+    p_label = ifelse(p_value < 0.001, "<0.001", round(p_value, 3))
+  )
+
+backward_selection_plot <- ggplot(
+  selection_plot_data,
+  aes(x = step, y = p_value, group = m)
+) +
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3.5) +
+  geom_text(
+  aes(label = removed_candidate),
+  hjust = 0,
+  nudge_x = 0.12,
+  size = 3.5,
+  vjust = 0
+) +
+  scale_x_continuous(
+  limits = c(1, 6),
+  breaks = 1:6,
+  expand = expansion(mult = c(0.02, 0.02))
+) +
+  facet_wrap(~ m, labeller = label_both) +
+  labs(
+    title = "Backward Selection Based on Pooled p-values",
+    x = "Backward Selection Step",
+    y = "Largest Pooled p-value"
+  ) +
+  theme_minimal(base_size = 16) +
+ theme(
+  plot.title = element_text(
+    face = "bold",
+    size = 18,
+    hjust = 0.5
+  ),
+  axis.title = element_text(
+    size = 16,
+    face = "bold"
+  ),
+  axis.text = element_text(
+    size = 14
+  ),
+  strip.text = element_text(
+    size = 15,
+    face = "bold"
+  ),
+  panel.grid.minor = element_blank(),
+
+  # Space between facets
+  panel.spacing = unit(1.5, "cm")
+)
+
+backward_selection_plot
+
+# Save plot
+
+ggsave(
+  filename = file.path(fig_path, "frequentist_backward_selection_plot.png"),
+  plot = backward_selection_plot,
+  width = 10,
+  height = 7,
+  dpi = 300
+)
+```
+
+
+
+
+
+```{r}
+# Export LaTeX regression tables
+
+make_latex_regression_table <- function(results, caption, filename) {
+  
+  table <- results %>%
+    select(term, OR_with_stars, std.error, p.value, conf.low, conf.high) %>%
+    rename(
+      Variable = term,
+      `Odds Ratio` = OR_with_stars,
+      `Std. Error` = std.error,
+      `p-value` = p.value,
+      `95\\% CI lower` = conf.low,
+      `95\\% CI upper` = conf.high
+    ) %>%
+    mutate(
+      Variable = gsub("_", "\\\\_", Variable),
+      `Std. Error` = round(`Std. Error`, 3),
+      `p-value` = ifelse(`p-value` < 0.001, "$<0.001$", round(`p-value`, 3)),
+      `95\\% CI lower` = round(`95\\% CI lower`, 3),
+      `95\\% CI upper` = round(`95\\% CI upper`, 3)
+    )
+  
+  latex_table <- kable(
+    table,
+    format = "latex",
+    booktabs = FALSE,
+    caption = caption,
+    escape = FALSE,
+    align = "llllll"
+  )
+  
+  latex_table <- gsub(
+    "\\\\begin\\{tabular\\}",
+    "\\\\resizebox{\\\\textwidth}{!}{%\n\\\\begin{tabular}",
+    latex_table
+  )
+  
+  latex_table <- gsub(
+    "\\\\end\\{tabular\\}",
+    "\\\\end{tabular}%\n}",
+    latex_table
+  )
+  
+  writeLines(latex_table, con = file.path(tables_path, filename))
+}
+
+make_latex_regression_table(results_full_m5, "Full frequentist logistic regression results for $m=5$.", "full_model_m5.tex")
+make_latex_regression_table(results_full_m10, "Full frequentist logistic regression results for $m=10$.", "full_model_m10.tex")
+make_latex_regression_table(results_full_m20, "Full frequentist logistic regression results for $m=20$.", "full_model_m20.tex")
+
+make_latex_regression_table(bw_manual_m5$final_model$results, "Final selected frequentist logistic regression model for $m=5$.", "selected_model_m5.tex")
+make_latex_regression_table(bw_manual_m10$final_model$results, "Final selected frequentist logistic regression model for $m=10$.", "selected_model_m10.tex")
+make_latex_regression_table(bw_manual_m20$final_model$results, "Final selected frequentist logistic regression model for $m=20$.", "selected_model_m20.tex")
+```
+
+
+
+
