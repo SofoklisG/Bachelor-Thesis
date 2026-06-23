@@ -1,16 +1,22 @@
 ---
-title: "Basic Plots - Thesis"
-output: pdf_document
-date: "2026-04-13"
+title: "01 - Exploratory Data Analysis"
+output: html_document
 ---
-This is some first exploration of the dataset and some basic plots/figures
+# Overview
 
+This script performs an exploratory analysis of the heart disease dataset used throughout the thesis.
 
-\textbf{Dataset Summary and basic results}
+The script:
+- imports and preprocesses the data,
+- produces descriptive summary tables,
+- visualises the distributions of predictors,
+- examines the relationship between predictors and heart disease status.
 
 ```{r}
 
-# Packages
+# ==================================================
+# Load packages and dataset
+# ==================================================
 
 library(tidyverse)
 library(knitr)
@@ -19,11 +25,11 @@ library(ggplot2)
 
 # Read dataset 
 
-data <- read_csv("C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis/heart.csv")
+data <- read_csv("heart.csv")
 
 # Save the plots
 
-fig_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis/figures"
+fig_path <- "figures"
 
 if (!dir.exists(fig_path)) {
   dir.create(fig_path)
@@ -33,6 +39,10 @@ if (!dir.exists(fig_path)) {
 
 
 ```{r}
+# ==================================================
+# Data preprocessing
+# ==================================================
+
 # Convert categorical variables 
 
 data <- data %>%
@@ -45,17 +55,6 @@ data <- data %>%
     ST_Slope = factor(ST_Slope),
     HeartDisease = factor(HeartDisease)
   )
-
-
-# Basic checks
-
-dim(data)
-glimpse(data)
-summary(data)
-colnames(data)
-colSums(is.na(data))
-cat("Number of rows containing a zero in the Cholesterol variable: ",
-    sum(data$Cholesterol == 0)) 
 
 # TABLE 1: Dataset dimensions
 
@@ -149,10 +148,11 @@ kable(response_table,
 ```
 
 
-\textbf{Plots for numerical variables}
-
-
 ```{r}
+# ==================================================
+# Numerical variable distributions
+# ==================================================
+
 numeric_vars <- data %>%
   select(where(is.numeric)) %>%
   names()
@@ -180,9 +180,11 @@ for (var in numeric_vars) {
 }
 ```
 
-\textbf{Plots for categorical variables}
-
 ```{r}
+# ==================================================
+# Categorical variable distributions
+# ==================================================
+
 categorical_vars <- data %>%
   select(where(is.factor)) %>%
   select(-HeartDisease) %>%
@@ -223,9 +225,11 @@ for (var in categorical_vars) {
 }
 ```
 
-\textbf{Response Variable}
 ```{r}
+
+# ==================================================
 # Response Variable
+# ==================================================
 
 heart_plot <- ggplot(data, aes(x = HeartDisease)) +
   geom_bar(fill = "#4C72B0", color = "black") +
@@ -256,11 +260,10 @@ ggsave(
 )
 ```
 
-
-\textbf{Numerical Variables vs HeartDisease}
-
 ```{r}
+# ==================================================
 # Numerical Variables vs HeartDisease
+# ==================================================
 
 numeric_vars <- data %>%
   select(where(is.numeric)) %>%
@@ -289,10 +292,11 @@ for (var in numeric_vars) {
 }
 ```
 
-\textbf{Categrical Variables vs HeartDisease}
 
 ```{r}
+# ==================================================
 # Categorical Variables vs HeartDisease
+# ==================================================
 
 for (var in categorical_vars) {
   
