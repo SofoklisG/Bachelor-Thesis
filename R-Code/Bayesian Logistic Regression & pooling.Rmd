@@ -13,7 +13,7 @@ The script:
 - refits the final Bayesian models,
 - computes posterior summaries, diagnostics, predicted probabilities, and predictive performance,
 - evaluates computational runtime,
-- generates figures and LaTeX tables.
+- generates figures.
 
 ```{r}
 # ==================================================
@@ -60,7 +60,9 @@ imp_m10 <- readRDS(
 
 
 ```{r}
+# ==================================================
 # Extract completed datasets
+# ==================================================
 
 completed_m5  <- complete(imp_m5, action = "all")
 completed_m10 <- complete(imp_m10, action = "all")
@@ -69,7 +71,9 @@ completed_m10 <- complete(imp_m10, action = "all")
 
 
 ```{r}
+# ==================================================
 # Define Bayesian model, priors, and MCMC settings
+# ==================================================
 
 full_formula <- bf(
   HeartDisease ~ Age + Sex + ChestPainType + RestingBP + Cholesterol +
@@ -87,8 +91,9 @@ bayes_iter <- 800
 bayes_warmup <- 400
 bayes_seed <- 123
 
-
+# ==================================================
 # Fit full Bayesian logistic regression models
+# ==================================================
 
 fit_full_bayes <- function(completed_data_list) {
   
@@ -109,8 +114,6 @@ fit_full_bayes <- function(completed_data_list) {
   )
 }
 
-# Fit full Bayesian logistic regression models 
-
 fits_full_m5 <- fit_full_bayes(completed_m5)
 
 fits_full_m10 <- fit_full_bayes(completed_m10)
@@ -120,7 +123,9 @@ fits_full_m10 <- fit_full_bayes(completed_m10)
 
 
 ```{r}
+# ==================================================
 # Pool posterior draws across imputations
+# ==================================================
 
 pool_bayes_draws <- function(fits) {
   
@@ -157,9 +162,6 @@ pool_bayes_draws <- function(fits) {
 pooled_full_m5 <- pool_bayes_draws(fits_full_m5)
 pooled_full_m10 <- pool_bayes_draws(fits_full_m10)
 
-pooled_full_m5
-pooled_full_m10
-
 # Save pooled posterior summaries
 
 write.csv(
@@ -178,7 +180,9 @@ write.csv(
 
 
 ```{r}
+# ==================================================
 # Extract HMC diagnostics
+# ==================================================
 
 extract_hmc_diagnostics <- function(fits) {
   
@@ -208,13 +212,13 @@ extract_hmc_diagnostics <- function(fits) {
 hmc_diagnostics_m5 <- extract_hmc_diagnostics(fits_full_m5)
 hmc_diagnostics_m10 <- extract_hmc_diagnostics(fits_full_m10)
 
-hmc_diagnostics_m5
-hmc_diagnostics_m10
 ```
 
 
 ```{r}
+# ==================================================
 # Save HMC diagnostics
+# ==================================================
 
 write.csv(
   hmc_diagnostics_m5,
@@ -232,7 +236,9 @@ write.csv(
 
 
 ```{r}
+# =======================================================
 # Run spike-and-slab variable selection and compute PIPs
+# =======================================================
 
 full_formula_selection <- HeartDisease ~ Age + Sex + ChestPainType + RestingBP + Cholesterol +
   FastingBS + RestingECG + MaxHR + ExerciseAngina + Oldpeak + ST_Slope
@@ -306,7 +312,9 @@ spike_slab_pips_m10 <- map(
 
 
 ```{r}
+# =============================================================
 # Average posterior inclusion probabilities across imputations
+# =============================================================
 
 avg_pips_m5 <- bind_rows(spike_slab_pips_m5, .id = "imputation") %>%
   group_by(term) %>%
@@ -326,13 +334,13 @@ avg_pips_m10 <- bind_rows(spike_slab_pips_m10, .id = "imputation") %>%
   ) %>%
   arrange(desc(mean_pip))
 
-avg_pips_m5
-avg_pips_m10
 ```
 
 
 ```{r}
+# ==================================================
 # Save posterior inclusion probabilities
+# ==================================================
 
 write.csv(
   avg_pips_m5,
@@ -350,7 +358,9 @@ write.csv(
 
 
 ```{r}
+# ==================================================
 # Select variables using PIP threshold
+# ==================================================
 
 clean_variable_names <- function(terms) {
   terms %>%
@@ -374,13 +384,13 @@ selected_bayes_m10_raw <- avg_pips_m10 %>%
 selected_bayes_m5 <- clean_variable_names(selected_bayes_m5_raw)
 selected_bayes_m10 <- clean_variable_names(selected_bayes_m10_raw)
 
-selected_bayes_m5
-selected_bayes_m10
 ```
 
 
 ```{r}
+# ==================================================
 # Refit final Bayesian models 
+# ==================================================
 
 final_formula_m5 <- as.formula(
   paste("HeartDisease ~", paste(selected_bayes_m5, collapse = " + "))
@@ -390,7 +400,7 @@ final_formula_m10 <- as.formula(
   paste("HeartDisease ~", paste(selected_bayes_m10, collapse = " + "))
 )
 
-# Use the same selected predictors and same order for both final Bayesian models
+# Use the same selected predictors for both final Bayesian models
 
 original_variable_order <- c(
   "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
@@ -403,13 +413,11 @@ selected_bayes_common <- original_variable_order[
     original_variable_order %in% selected_bayes_m10
 ]
 
-selected_bayes_common
 
 final_formula_bayes <- as.formula(
   paste("HeartDisease ~", paste(selected_bayes_common, collapse = " + "))
 )
 
-final_formula_bayes
 
 fit_final_bayes <- function(completed_data_list, formula_final) {
   
@@ -439,13 +447,12 @@ fits_final_m10 <- fit_final_bayes(completed_m10, final_formula_bayes)
 
 
 ```{r}
+# ==================================================
 # Extract HMC diagnostics for final Bayesian models
+# ==================================================
 
 hmc_diagnostics_final_m5 <- extract_hmc_diagnostics(fits_final_m5)
 hmc_diagnostics_final_m10 <- extract_hmc_diagnostics(fits_final_m10)
-
-hmc_diagnostics_final_m5
-hmc_diagnostics_final_m10
 
 # Save HMC diagnostics for final Bayesian models
 
@@ -465,7 +472,9 @@ write.csv(
 
 
 ```{r}
+# =================================================================
 # Compute Bayesian predicted probabilities for each imputed dataset
+# =================================================================
 
 get_bayesian_predicted_probabilities <- function(fits_final, m_value) {
   
@@ -544,10 +553,9 @@ write.csv(
 
 
 ```{r}
-
+# =============================================================
 # Bayesian predictive performance with 95% confidence intervals
-# Performance is computed separately for each imputed dataset,
-# then averaged across imputations using mean ± 1.96 * SE.
+# =============================================================
 
 compute_bayesian_performance_by_imputation <- function(pred_data, m_value) {
   
@@ -630,7 +638,9 @@ summarise_bayesian_performance <- function(performance_by_imp, m_value) {
 
 
 ```{r}
+# =======================================================
 # Compute performance separately for each imputed dataset
+# =======================================================
 
 bayes_performance_by_imp_m5 <- compute_bayesian_performance_by_imputation(
   pred_data = bayesian_predicted_probabilities_m5,
@@ -666,7 +676,9 @@ bayes_performance_results
 
 
 ```{r}
+# ==================================================
 # Plot ROC curve for Bayesian model m = 10
+# ==================================================
 
 bayes_roc_m10 <- roc(
   response = bayesian_predicted_probabilities_avg_m10$HeartDisease,
@@ -721,7 +733,9 @@ ggsave(
 
 
 ```{r}
+# ==================================================
 # Save Bayesian predictive performance results
+# ==================================================
 
 write.csv(
   bayesian_predicted_probabilities_m5,
@@ -769,18 +783,20 @@ write.csv(
 
 
 ```{r}
+# ==================================================
 # Pool final Bayesian posterior draws
+# ==================================================
 
 pooled_final_m5 <- pool_bayes_draws(fits_final_m5)
 pooled_final_m10 <- pool_bayes_draws(fits_final_m10)
 
-pooled_final_m5
-pooled_final_m10
 ```
 
 
 ```{r}
+# ==================================================
 # Save final Bayesian model results
+# ==================================================
 
 write.csv(
   pooled_final_m5,
@@ -797,7 +813,9 @@ write.csv(
 
 
 ```{r}
+# ==================================================
 # Create Bayesian summary tables
+# ==================================================
 
 all_original_vars <- c(
   "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
@@ -906,24 +924,24 @@ bayesian_comparison_final_results_m5_m10 <- bind_rows(
   bayesian_results_m10$comparison_final_results
 )
 
-bayesian_model_summary_m5_m10
-bayesian_comparison_final_results_m5_m10
 ```
 
 
 
 ```{r}
+# ==================================================
 # Save Bayesian summary tables
+# ==================================================
 
 write.csv(
   bayesian_model_summary_m5_m10,
-  file.path(output_path, "bayesian_model_summary_m5_m10.csv"),
+  file.path(bayes_results_path, "bayesian_model_summary_m5_m10.csv"),
   row.names = FALSE
 )
 
 write.csv(
   bayesian_comparison_final_results_m5_m10,
-  file.path(output_path, "bayesian_comparison_final_results_m5_m10.csv"),
+  file.path(bayes_results_path, "bayesian_comparison_final_results_m5_m10.csv"),
   row.names = FALSE
 )
 ```
@@ -931,7 +949,9 @@ write.csv(
 
 
 ```{r}
+# ==================================================
 # Bayesian runtime stability
+# ==================================================
 
 n_time_runs <- 5
 
@@ -1033,8 +1053,6 @@ bayes_runtime_stability_summary <- bayes_runtime_stability_raw %>%
     .groups = "drop"
   )
 
-bayes_runtime_stability_summary
-
 write.csv(
   bayes_runtime_stability_raw,
   file.path(bayes_results_path, "bayesian_runtime_stability_raw.csv"),
@@ -1052,8 +1070,9 @@ write.csv(
 
 
 ```{r}
-
-# Bayesian Plots
+# ==================================================
+# Create Bayesian Plots
+# ==================================================
 
 # Create Bayesian PIP plot
 
@@ -1215,161 +1234,3 @@ ggsave(
   dpi = 300
 )
 ```
-
-```{r}
-
-# Export Bayesian LaTeX Tables
-
-
-library(knitr)
-
-tables_path <- file.path(output_path, "Tables")
-
-if (!dir.exists(tables_path)) {
-  dir.create(tables_path)
-}
-
-
-# Function: Bayesian regression tables
-
-
-make_latex_bayesian_table <- function(results, caption, filename) {
-  
-  table <- results %>%
-    filter(term != "b_Intercept", term != "Intercept") %>%
-    mutate(
-      term = gsub("^b_", "", term),
-      term = gsub("_", "\\\\_", term),
-      OR = round(OR, 3),
-      OR_lower = round(OR_lower, 3),
-      OR_upper = round(OR_upper, 3),
-      `95\\% CrI` = paste0("(", OR_lower, ", ", OR_upper, ")")
-    ) %>%
-    select(term, OR, `95\\% CrI`) %>%
-    rename(
-      Variable = term,
-      `Odds Ratio` = OR
-    )
-  
-  latex_table <- kable(
-    table,
-    format = "latex",
-    booktabs = FALSE,
-    caption = caption,
-    escape = FALSE,
-    align = "lll"
-  )
-  
-  latex_table <- gsub(
-    "\\\\begin\\{tabular\\}",
-    "\\\\resizebox{\\\\textwidth}{!}{%\n\\\\begin{tabular}",
-    latex_table
-  )
-  
-  latex_table <- gsub(
-    "\\\\end\\{tabular\\}",
-    "\\\\end{tabular}%\n}",
-    latex_table
-  )
-  
-  writeLines(
-    latex_table,
-    con = file.path(tables_path, filename)
-  )
-}
-
-
-# Function: HMC diagnostics tables
-
-
-make_latex_hmc_table <- function(results, caption, filename) {
-  
-  table <- results %>%
-    mutate(
-      variable = gsub("^b_", "", variable),
-      variable = gsub("_", "\\\\_", variable),
-      rhat = round(rhat, 3),
-      ess_bulk = round(ess_bulk, 0),
-      ess_tail = round(ess_tail, 0),
-      mcse_ratio = round(mcse_ratio, 3)
-    ) %>%
-    select(variable, rhat, ess_bulk, ess_tail, mcse_ratio) %>%
-    rename(
-      Parameter = variable,
-      `$\\hat{R}$` = rhat,
-      `Bulk ESS` = ess_bulk,
-      `Tail ESS` = ess_tail,
-      `MCSE/SD` = mcse_ratio
-    )
-  
-  latex_table <- kable(
-    table,
-    format = "latex",
-    booktabs = FALSE,
-    caption = caption,
-    escape = FALSE,
-    align = "lllll"
-  )
-  
-  latex_table <- gsub(
-    "\\\\begin\\{tabular\\}",
-    "\\\\resizebox{\\\\textwidth}{!}{%\n\\\\begin{tabular}",
-    latex_table
-  )
-  
-  latex_table <- gsub(
-    "\\\\end\\{tabular\\}",
-    "\\\\end{tabular}%\n}",
-    latex_table
-  )
-  
-  writeLines(
-    latex_table,
-    con = file.path(tables_path, filename)
-  )
-}
-
-
-# Export Bayesian regression tables
-
-
-make_latex_bayesian_table(
-  bayesian_results_m5$full_results,
-  "Full Bayesian logistic regression results for $m=5$.",
-  "bayes_full_model_m5.tex"
-)
-
-make_latex_bayesian_table(
-  bayesian_results_m10$full_results,
-  "Full Bayesian logistic regression results for $m=10$.",
-  "bayes_full_model_m10.tex"
-)
-
-make_latex_bayesian_table(
-  bayesian_results_m5$final_results,
-  "Final Bayesian logistic regression results for $m=5$.",
-  "bayes_final_model_m5.tex"
-)
-
-make_latex_bayesian_table(
-  bayesian_results_m10$final_results,
-  "Final Bayesian logistic regression results for $m=10$.",
-  "bayes_final_model_m10.tex"
-)
-
-# Export HMC diagnostics tables
-
-
-make_latex_hmc_table(
-  hmc_diagnostics_m5,
-  "HMC convergence diagnostics for the Bayesian model under $m=5$.",
-  "hmc_diagnostics_m5.tex"
-)
-
-make_latex_hmc_table(
-  hmc_diagnostics_m10,
-  "HMC convergence diagnostics for the Bayesian model under $m=10$.",
-  "hmc_diagnostics_m10.tex"
-)
-```
-
