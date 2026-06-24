@@ -1098,13 +1098,16 @@ write.csv(
   row.names = FALSE
 )
 
-write.csv(runtime_stability_summary,
-          file.path(subsampling_results_path, "subsampling_runtime_stability_summary.csv"),
-          row.names = FALSE)
+write.csv(
+  runtime_stability_summary,
+  file.path(subsampling_results_path, "subsampling_runtime_stability_summary.csv"),
+  row.names = FALSE
+)
 
-write.csv(runtime_stability_raw,
-          file.path(subsampling_results_path, "subsampling_runtime_stability_raw.csv"),
-          row.names = FALSE)
+write.csv(
+  runtime_stability_raw,
+  file.path(subsampling_results_path, "subsampling_runtime_stability_raw.csv"),
+  row.names = FALSE)
 
 
 write.csv(all_inclusion_frequencies,
