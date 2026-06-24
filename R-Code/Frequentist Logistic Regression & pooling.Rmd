@@ -1,8 +1,19 @@
 ---
-title: "Frequentist Logistic Regression"
-output: pdf_document
-date: "2026-04-20"
+title: "03 - Frequentist Logistic Regression"
+output: html_document
 ---
+# Overview
+
+This script implements the frequentist logistic regression analysis used in the thesis.
+
+The script:
+- loads the imputed datasets,
+- fits full logistic regression models,
+- performs backward variable selection using pooled p-values,
+- compares models across imputation settings,
+- computes predicted probabilities and predictive performance,
+- evaluates computational runtime,
+- generates figures and LaTeX tables.
 
 ```{r}
 # Load packages, paths, and imputed datasets
@@ -17,7 +28,7 @@ library(pROC)
 library(caret)
 library(purrr)
 
-output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+output_path <- "."
 
 # Results path
 
@@ -39,10 +50,21 @@ if (!dir.exists(tables_path)) {
   dir.create(tables_path)
 }
 
-imp_m5 <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
-imp_m10 <- readRDS(file.path(output_path, "imputed_data_m10.rds"))
-imp_m20 <- readRDS(file.path(output_path, "imputed_data_m20.rds"))
+if (!dir.exists(freq_results_path)) {
+  dir.create(freq_results_path, recursive = TRUE)
+}
 
+imp_m5 <- readRDS(
+  file.path(output_path, "Imputed-Data", "imputed_data_m5.rds")
+)
+
+imp_m10 <- readRDS(
+  file.path(output_path, "Imputed-Data", "imputed_data_m10.rds")
+)
+
+imp_m20 <- readRDS(
+  file.path(output_path, "Imputed-Data", "imputed_data_m20.rds")
+)
 
 ```
 
@@ -215,15 +237,12 @@ results_full_m10 <- fit_full_pooled_model(imp_m10)
 
 results_full_m20 <- fit_full_pooled_model(imp_m20)
 
-results_full_m5
-results_full_m10
-results_full_m20
 ```
 
 
 
 ```{r}
-# Run backward selection 
+# Run backward elimination
 
 bw_manual_m5 <- backward_selection_pooled(
     imp_object = imp_m5,
@@ -245,24 +264,6 @@ bw_manual_m20 <- backward_selection_pooled(
   )
 
 ```
-
-
-```{r}
-# Inspect backward selection results
-
-bw_manual_m5$selection_steps
-bw_manual_m5$final_predictors
-bw_manual_m5$final_model$results
-
-bw_manual_m10$selection_steps
-bw_manual_m10$final_predictors
-bw_manual_m10$final_model$results
-
-bw_manual_m20$selection_steps
-bw_manual_m20$final_predictors
-bw_manual_m20$final_model$results
-```
-
 
 
 ```{r}
@@ -365,14 +366,14 @@ comparison_final_results <- bind_rows(
     number_removed_variables
   )
 
-comparison_final_results
-
 write.csv(
   comparison_final_results,
   file.path(freq_results_path, "comparison_final_results_m5_m10_m20.csv"),
   row.names = FALSE
 )
 ```
+
+
 ```{r}
 # Compare backward selection steps across imputations
 
@@ -396,7 +397,6 @@ comparison_selection_steps <- bind_rows(
   extract_selection_summary(bw_manual_m20, 20)
 )
 
-comparison_selection_steps
 
 write.csv(
   comparison_selection_steps,
@@ -463,7 +463,6 @@ freq_pred_all <- bind_rows(
   freq_pred_m20
 )
 
-freq_pred_all
 ```
 
 ```{r}
@@ -602,8 +601,6 @@ freq_runtime_stability_summary <- freq_runtime_stability_raw %>%
     ),
     .groups = "drop"
   )
-
-freq_runtime_stability_summary
 
 write.csv(
   freq_runtime_stability_raw,
@@ -807,7 +804,6 @@ freq_performance_results <- bind_rows(
   freq_performance_summary_m20
 )
 
-freq_performance_results
 ```
 
 
