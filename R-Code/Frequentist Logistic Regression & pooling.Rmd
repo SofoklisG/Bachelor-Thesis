@@ -30,35 +30,22 @@ library(pROC)
 library(caret)
 library(purrr)
 
-output_path <- "."
-
-# Results path
+input_path <- "Imputed-Data"
 
 freq_results_path <- file.path(
-  output_path,
   "Results",
   "Frequentist Approach",
   "Pooling results"
 )
 
-fig_path <- file.path(output_path, "figures")
-tables_path <- file.path(output_path, "Tables")
+fig_path <- "figures"
 
-if (!dir.exists(fig_path)) {
-  dir.create(fig_path)
-}
+dir.create(freq_results_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
 
-if (!dir.exists(tables_path)) {
-  dir.create(tables_path)
-}
-
-if (!dir.exists(freq_results_path)) {
-  dir.create(freq_results_path, recursive = TRUE)
-}
-
-imp_m5 <- readRDS(file.path(output_path, "Imputed-Data", "imputed_data_m5.rds"))
-imp_m10 <- readRDS(file.path(output_path, "Imputed-Data", "imputed_data_m10.rds"))
-imp_m20 <- readRDS(file.path(output_path, "Imputed-Data", "imputed_data_m20.rds"))
+imp_m5 <- readRDS(file.path(input_path, "imputed_data_m5.rds"))
+imp_m10 <- readRDS(file.path(input_path, "imputed_data_m10.rds"))
+imp_m20 <- readRDS(file.path(input_path, "imputed_data_m20.rds"))
 
 ```
 
