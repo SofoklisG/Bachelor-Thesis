@@ -1,11 +1,24 @@
 ---
-title: "Bayesian Logistic Regression & pooling"
-output: pdf_document
-date: "2026-05-06"
+title: "04 - Bayesian Logistic Regression"
+output: html_document
 ---
+# Overview
+
+This script implements the Bayesian logistic regression analysis used in the thesis.
+
+The script:
+- loads the imputed datasets,
+- fits full Bayesian logistic regression models using HMC,
+- performs spike-and-slab variable selection,
+- refits the final Bayesian models,
+- computes posterior summaries, diagnostics, predicted probabilities, and predictive performance,
+- evaluates computational runtime,
+- generates figures and LaTeX tables.
 
 ```{r}
+# ==================================================
 # Load packages, paths, and imputed datasets
+# ==================================================
 
 library(mice)
 library(brms)
@@ -17,18 +30,11 @@ library(posterior)
 library(nimble)
 library(ggplot2)
 library(pROC)
+library(knitr)
 
 options(brms.backend = "rstan")
-# Results path
 
-bayes_results_path <- file.path(output_path, "Results", "Bayesian Approach")
-
-output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
-fig_path <- file.path(output_path, "figures")
-
-# Results path
-
-output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+output_path <- "."
 
 bayes_results_path <- file.path(
   output_path,
@@ -37,15 +43,20 @@ bayes_results_path <- file.path(
 )
 
 fig_path <- file.path(output_path, "figures")
+tables_path <- file.path(output_path, "Tables")
 
-if (!dir.exists(fig_path)) {
-  dir.create(fig_path)
-}
+dir.create(bayes_results_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(tables_path, recursive = TRUE, showWarnings = FALSE)
 
-imp_m5  <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
-imp_m10 <- readRDS(file.path(output_path, "imputed_data_m10.rds"))
+imp_m5 <- readRDS(
+  file.path(output_path, "Imputed-Data", "imputed_data_m5.rds")
+)
+
+imp_m10 <- readRDS(
+  file.path(output_path, "Imputed-Data", "imputed_data_m10.rds")
+)
 ```
-
 
 
 ```{r}
@@ -207,13 +218,13 @@ hmc_diagnostics_m10
 
 write.csv(
   hmc_diagnostics_m5,
-  file.path(output_path, "bayesian_hmc_diagnostics_m5.csv"),
+  file.path(bayes_results_path, "bayesian_hmc_diagnostics_m5.csv"),
   row.names = FALSE
 )
 
 write.csv(
   hmc_diagnostics_m10,
-  file.path(output_path, "bayesian_hmc_diagnostics_m10.csv"),
+ file.path(bayes_results_path, "bayesian_hmc_diagnostics_m10.csv"),
   row.names = FALSE
 )
 ```
@@ -325,13 +336,13 @@ avg_pips_m10
 
 write.csv(
   avg_pips_m5,
-  file.path(output_path, "bayesian_pips_m5.csv"),
+  file.path(bayes_results_path, "bayesian_pips_m5.csv"),
   row.names = FALSE
 )
 
 write.csv(
   avg_pips_m10,
-  file.path(output_path, "bayesian_pips_m10.csv"),
+  file.path(bayes_results_path, "bayesian_pips_m10.csv"),
   row.names = FALSE
 )
 ```
