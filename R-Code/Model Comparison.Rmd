@@ -25,22 +25,24 @@ library(knitr)
 
 # Paths
 
-output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
-
 freq_path <- file.path(
-  output_path,
+  "..",
   "Results",
   "Frequentist Approach",
   "Pooling results"
 )
 
 bayes_path <- file.path(
-  output_path,
+  "..",
   "Results",
   "Bayesian Approach"
 )
 
-fig_path <- file.path(output_path, "figures")
+fig_path <- "../figures"
+tables_path <- "../Tables"
+
+dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(tables_path, recursive = TRUE, showWarnings = FALSE)
 ```
 
 
