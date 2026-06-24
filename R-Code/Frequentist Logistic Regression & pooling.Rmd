@@ -16,7 +16,9 @@ The script:
 - generates figures and LaTeX tables.
 
 ```{r}
+# ==================================================
 # Load packages, paths, and imputed datasets
+# ==================================================
 
 library(mice)
 library(dplyr)
@@ -71,7 +73,9 @@ imp_m20 <- readRDS(
 
 
 ```{r}
+# ==================================================
 # Define predictors and significance-star function 
+# ==================================================
 
 predictors_full <- c(
   "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
@@ -95,7 +99,9 @@ add_significance_stars <- function(results) {
 
 
 ```{r}
+# ==================================================
 # Define functions for pooled frequentist models
+# ==================================================
 
 fit_full_pooled_model <- function(imp_object) {
   
@@ -157,7 +163,9 @@ fit_pool_model <- function(imp_object, predictors) {
 
 
 ```{r}
-# Define backward selection using pooled p-values
+# ==================================================
+# Define backward elimination using pooled p-values
+# ==================================================
 
 get_base_predictor <- function(term) {
   case_when(
@@ -229,7 +237,9 @@ backward_selection_pooled <- function(imp_object, predictors, p_cutoff = 0.05) {
 
 
 ```{r}
+# ==================================================
 # Fit full frequentist models 
+# ==================================================
 
 results_full_m5 <- fit_full_pooled_model(imp_m5)
 
@@ -242,7 +252,9 @@ results_full_m20 <- fit_full_pooled_model(imp_m20)
 
 
 ```{r}
+# ==================================================
 # Run backward elimination
+# ==================================================
 
 bw_manual_m5 <- backward_selection_pooled(
     imp_object = imp_m5,
@@ -267,7 +279,9 @@ bw_manual_m20 <- backward_selection_pooled(
 
 
 ```{r}
+# ==================================================
 # Save full model and selected model results
+# ==================================================
 
 write.csv(
   results_full_m5,
@@ -326,7 +340,9 @@ write.csv(
 
 
 ```{r}
+# ==================================================
 # Compare final selected models across imputations
+# ==================================================
 
 extract_final_summary <- function(bw_object, m_value) {
   
@@ -375,7 +391,9 @@ write.csv(
 
 
 ```{r}
-# Compare backward selection steps across imputations
+# ======================================================
+# Compare backward elimination steps across imputations
+# ======================================================
 
 extract_selection_summary <- function(bw_object, m_value) {
   
@@ -407,7 +425,9 @@ write.csv(
 
 
 ```{r}
+# ============================================================
 # Compute predicted probabilities for final frequentist models
+# ============================================================
 
 get_frequentist_predicted_probabilities <- function(bw_object, imp_object, m_value) {
   
@@ -466,7 +486,9 @@ freq_pred_all <- bind_rows(
 ```
 
 ```{r}
+# ===============================================================
 # Average frequentist predicted probabilities across imputations
+# ===============================================================
 
 average_frequentist_predictions <- function(pred_data, m_value) {
   
@@ -508,7 +530,9 @@ write.csv(
 
 
 ```{r}
+# ============================================================
 # Frequentist runtime stability: mean ± SD over repeated runs
+# ============================================================
 
 n_time_runs <- 5
 
@@ -617,7 +641,9 @@ write.csv(
 
 
 ```{r}
+# ============================================================
 # Save frequentist predicted probabilities
+# ============================================================
 
 write.csv(
   freq_pred_m5,
@@ -646,7 +672,9 @@ write.csv(
 
 
 ```{r}
+# ============================================================
 # Plot frequentist predicted probabilities for m = 10
+# ============================================================
 
 freq_pred_plot_m10 <- freq_pred_m10 %>%
   mutate(
@@ -683,8 +711,9 @@ ggsave(
 ```
 
 ```{r}
-
+# =================================================================
 # Frequentist predictive performance with 95% confidence intervals
+# =================================================================
 
 compute_frequentist_performance_by_imputation <- function(pred_data, m_value) {
   
@@ -807,9 +836,10 @@ freq_performance_results <- bind_rows(
 ```
 
 
-```{r}
+```{r} 
+# ===============================
 # Plot ROC curve for m = 10
-
+# ===============================
 freq_roc_m10 <- roc(
   response = freq_pred_avg_m10$observed,
   predictor = freq_pred_avg_m10$predicted_probability,
@@ -880,7 +910,9 @@ ggsave(
 
 
 ```{r}
+# ============================================================
 # Save frequentist predictive performance results
+# ============================================================
 
 write.csv(
   freq_performance_by_imp_m5,
@@ -910,7 +942,9 @@ write.csv(
 
 
 ```{r}
+# =========================
 # Create frequentist plots
+# =========================
 
 selection_plot_data <- comparison_selection_steps %>%
   mutate(
@@ -982,66 +1016,6 @@ ggsave(
   height = 7,
   dpi = 300
 )
-```
-
-
-
-
-
-```{r}
-# Export LaTeX regression tables
-
-make_latex_regression_table <- function(results, caption, filename) {
-  
-  table <- results %>%
-    select(term, OR_with_stars, std.error, p.value, conf.low, conf.high) %>%
-    rename(
-      Variable = term,
-      `Odds Ratio` = OR_with_stars,
-      `Std. Error` = std.error,
-      `p-value` = p.value,
-      `95\\% CI lower` = conf.low,
-      `95\\% CI upper` = conf.high
-    ) %>%
-    mutate(
-      Variable = gsub("_", "\\\\_", Variable),
-      `Std. Error` = round(`Std. Error`, 3),
-      `p-value` = ifelse(`p-value` < 0.001, "$<0.001$", round(`p-value`, 3)),
-      `95\\% CI lower` = round(`95\\% CI lower`, 3),
-      `95\\% CI upper` = round(`95\\% CI upper`, 3)
-    )
-  
-  latex_table <- kable(
-    table,
-    format = "latex",
-    booktabs = FALSE,
-    caption = caption,
-    escape = FALSE,
-    align = "llllll"
-  )
-  
-  latex_table <- gsub(
-    "\\\\begin\\{tabular\\}",
-    "\\\\resizebox{\\\\textwidth}{!}{%\n\\\\begin{tabular}",
-    latex_table
-  )
-  
-  latex_table <- gsub(
-    "\\\\end\\{tabular\\}",
-    "\\\\end{tabular}%\n}",
-    latex_table
-  )
-  
-  writeLines(latex_table, con = file.path(tables_path, filename))
-}
-
-make_latex_regression_table(results_full_m5, "Full frequentist logistic regression results for $m=5$.", "full_model_m5.tex")
-make_latex_regression_table(results_full_m10, "Full frequentist logistic regression results for $m=10$.", "full_model_m10.tex")
-make_latex_regression_table(results_full_m20, "Full frequentist logistic regression results for $m=20$.", "full_model_m20.tex")
-
-make_latex_regression_table(bw_manual_m5$final_model$results, "Final selected frequentist logistic regression model for $m=5$.", "selected_model_m5.tex")
-make_latex_regression_table(bw_manual_m10$final_model$results, "Final selected frequentist logistic regression model for $m=10$.", "selected_model_m10.tex")
-make_latex_regression_table(bw_manual_m20$final_model$results, "Final selected frequentist logistic regression model for $m=20$.", "selected_model_m20.tex")
 ```
 
 
