@@ -15,7 +15,6 @@ The scripts implement a complete workflow consisting of:
 The workflow was originally developed for a heart disease dataset but can also be adapted to other binary classification datasets with appropriate modifications.
 
 
-
 # Repository Structure
 
 ## Required Dataset:
