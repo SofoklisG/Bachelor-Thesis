@@ -56,17 +56,9 @@ if (!dir.exists(freq_results_path)) {
   dir.create(freq_results_path, recursive = TRUE)
 }
 
-imp_m5 <- readRDS(
-  file.path(output_path, "Imputed-Data", "imputed_data_m5.rds")
-)
-
-imp_m10 <- readRDS(
-  file.path(output_path, "Imputed-Data", "imputed_data_m10.rds")
-)
-
-imp_m20 <- readRDS(
-  file.path(output_path, "Imputed-Data", "imputed_data_m20.rds")
-)
+imp_m5 <- readRDS(file.path(output_path, "Imputed-Data", "imputed_data_m5.rds"))
+imp_m10 <- readRDS(file.path(output_path, "Imputed-Data", "imputed_data_m10.rds"))
+imp_m20 <- readRDS(file.path(output_path, "Imputed-Data", "imputed_data_m20.rds"))
 
 ```
 
