@@ -1,4 +1,4 @@
-#Bachelor Thesis: Frequentist and Bayesian Logistic Regression for Heart Disease Prediction
+Bachelor Thesis: Frequentist and Bayesian Logistic Regression for Heart Disease Prediction
 
 This folder contains all R Markdown scripts used to reproduce the analyses presented in the thesis. The scripts implement a complete workflow consisting of data preprocessing, multiple imputation, frequentist and Bayesian logistic regression modelling, model comparison, cross-validation, and subsampling analyses.
 
@@ -26,10 +26,6 @@ Generated folders:
 * Tables
 
 These folders are automatically created when the scripts are executed.
-
-======================================================================
-COMPLETE EXECUTION ORDER
-========================
 
 The scripts should be run in the following order.
 
@@ -182,10 +178,6 @@ Required input:
 
 * imputed_data_m5.rds
 
-======================================================================
-USING THE WORKFLOW WITH A DIFFERENT DATASET
-===========================================
-
 The workflow can be adapted to other binary classification datasets.
 
 To use a different dataset:
@@ -220,10 +212,6 @@ The workflow assumes:
 * a binary response variable,
 * logistic regression as the modelling framework,
 * multiple imputation for missing-data handling.
-
-======================================================================
-MAIN FUNCTIONS AND EXECUTION ORDER
-==================================
 
 Users do not normally need to call functions manually. Running the scripts in the recommended order automatically executes the required functions.
 
@@ -404,10 +392,6 @@ Execution order:
 
 Run after the final models have been fitted and validated.
 
-======================================================================
-SUMMARY OF THE COMPLETE WORKFLOW
-================================
-
 For a full reproduction of the thesis:
 
 1. Exploratory Analysis.Rmd
@@ -431,10 +415,7 @@ Optional validation and robustness analyses:
 6. Cross Validation.Rmd
 7. Subsampling.Rmd
 
-======================================================================
-NOTES
-=====
-
+NOTES:
 * All file paths are relative and should work on any operating system provided the repository structure is preserved.
 * Output folders are created automatically when required.
 * Bayesian analyses may require substantial computation time due to Hamiltonian Monte Carlo sampling and spike-and-slab variable selection.
