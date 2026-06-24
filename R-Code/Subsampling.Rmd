@@ -1,11 +1,25 @@
 ---
-title: "Subsampling"
-output: pdf_document
-date: "2026-05-08"
+title: "07 - Subsampling"
+output: html_document
 ---
 
+# Overview
+
+This script evaluates the stability of the frequentist and Bayesian modelling procedures under reduced sample sizes.
+
+The script:
+- loads one completed dataset from the \(m = 5\) imputation setting,
+- creates repeated subsamples at 50%, 25%, 12.5%, and 6.25% of the original sample size,
+- evaluates variable-selection stability for frequentist and Bayesian methods,
+- compares predictive performance under subsampling,
+- summarises odds ratios and uncertainty intervals,
+- evaluates runtime stability,
+- exports figures and result tables.
+
 ```{r}
+# ==================================================
 # Load packages, paths, and imputed dataset
+# ==================================================
 
 library(mice)
 library(posterior)
@@ -20,34 +34,33 @@ library(pROC)
 
 options(brms.backend = "rstan")
 
-output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+# Paths
+
+input_path <- "Imputed-Data"
 
 subsampling_results_path <- file.path(
-  output_path,
   "Results",
   "Subsampling Analysis"
 )
 
-fig_path <- file.path(output_path, "figures")
+fig_path <- "figures"
 
-if (!dir.exists(subsampling_results_path)) {
-  dir.create(subsampling_results_path, recursive = TRUE)
-}
+dir.create(subsampling_results_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
 
-if (!dir.exists(fig_path)) {
-  dir.create(fig_path)
-}
+imp_m5 <- readRDS(
+  file.path(input_path, "imputed_data_m5.rds")
+)
 
-imp_m5 <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
-
-# Use one representative completed dataset
 data_full <- complete(imp_m5, 1)
 
 ```
 
 
 ```{r}
+# ==================================================
 # Define predictors and helper functions
+# ==================================================
 
 predictors_full <- c(
   "Age", "Sex", "ChestPainType", "RestingBP", "Cholesterol",
@@ -83,16 +96,13 @@ clean_variable_names <- function(terms) {
     unique()
 }
 
-saved <- readRDS(
-  file.path(subsampling_results_path, "subsampling_objects_before_consensus.rds")
-)
-
-
 ```
 
 
 ```{r}
-# Create subsamples 
+# ==================================================
+# Create subsamples for variable-selection stability
+# ==================================================
 
 set.seed(123)
 
@@ -133,7 +143,9 @@ bayes_subsamples <- list(
 
 
 ```{r}
-# Predictive Performance function
+# ==================================================
+# Define predictive performance function
+# ==================================================
 
 compute_classification_metrics <- function(data, probabilities, cutoff = 0.5) {
   
@@ -162,7 +174,9 @@ compute_classification_metrics <- function(data, probabilities, cutoff = 0.5) {
 
 
 ```{r}
-# Frequentist backward selection for one representative dataset
+# ==================================================
+# Define frequentist backward elimination function
+# ==================================================
 
 fit_glm_model <- function(data, predictors) {
   
@@ -237,6 +251,10 @@ backward_selection_single <- function(data, predictors, p_cutoff = 0.05) {
 
 
 ```{r}
+# ==================================================
+# Run frequentist subsampling selection
+# ==================================================
+
 run_frequentist_subsampling <- function(subsamples, prop_label) {
   
   map_dfr(
@@ -293,7 +311,9 @@ freq_subsampling_summary
 
 
 ```{r}
-# Frequentist inclusion frequencies
+# ==================================================
+# Compute frequentist inclusion frequencies
+# ==================================================
 
 extract_inclusion_frequency <- function(summary_data, method_name) {
   
@@ -330,7 +350,9 @@ freq_inclusion_frequencies
 
 
 ```{r}
-# Define Bayesian settings
+# ==================================================
+# Define Bayesian settings and spike-and-slab selection
+# ==================================================
 
 priors <- c(
   prior(student_t(7, 0, 2.5), class = "b"),
@@ -410,7 +432,9 @@ run_spike_slab_selection <- function(dat, formula_full, niter = 4000, nburnin = 
 
 
 ```{r}
-# Run Bayesian subsampling 
+# ==================================================
+# Run Bayesian subsampling selection
+# ==================================================
 
 
 run_bayesian_subsampling_selection <- function(subsamples, prop_label) {
@@ -460,7 +484,9 @@ bayes_subsampling_summary
 ```
 
 ```{r}
-# Bayesian inclusion frequencies
+# ==================================================
+# Compute Bayesian inclusion frequencies
+# ==================================================
 
 bayes_inclusion_frequencies <- extract_inclusion_frequency(
   bayes_subsampling_summary,
@@ -475,7 +501,9 @@ bayes_inclusion_frequencies
 
 
 ```{r}
-# Create 5 subsamples to assess predictive performance of the 2 approaches
+# ==================================================
+# Create subsamples for predictive performance analysis
+# ==================================================
 
 B_perf <- 5
 
@@ -491,7 +519,9 @@ performance_subsamples <- list(
 
 
 ```{r}
-# Frequentist predictive performance function
+# ==================================================
+# Define predictive performance functions under subsampling
+# ==================================================
 
 run_frequentist_predictive_performance <- function(subsamples, prop_label) {
   
@@ -647,7 +677,9 @@ posterior_or_draws <- as_draws_df(fit) %>%
 
 
 ```{r}
-# Run predictive performance functions
+# ==================================================
+# Run predictive performance analysis
+# ==================================================
 
 predictive_performance_raw <- bind_rows(
   
@@ -674,7 +706,9 @@ subsample_or_raw <- predictive_performance_raw %>%
 
 
 ```{r}
-# Mean OR and 95% CI and 95% CRI 
+# ==================================================
+# Summarise odds ratios and uncertainty intervals
+# ==================================================
 
 freq_subsample_or_summary <- subsample_or_raw %>%
   filter(method == "Frequentist") %>%
@@ -731,7 +765,9 @@ subsample_or_summary
 
 
 ```{r}
-# mean and 95% confidence intervals for the predictive performance metrics
+# ==================================================
+# Summarise predictive performance metrics
+# ==================================================
 
 mean_ci <- function(x) {
   
@@ -779,7 +815,9 @@ predictive_performance_summary
 
 ```{r}
 
+# ==================================================
 # Combine frequentist and Bayesian inclusion frequencies
+# ==================================================
 
 all_inclusion_frequencies <- bind_rows(
   freq_inclusion_frequencies,
@@ -795,7 +833,10 @@ all_inclusion_frequencies
 
 
 ```{r}
+
+# ==================================================
 # Plot inclusion frequencies
+# ==================================================
 
 inclusion_frequency_plot <- all_inclusion_frequencies %>%
   mutate(
@@ -834,7 +875,9 @@ ggsave(
 ```
 
 ```{r}
-# Models from subsampling inclusion frequencies
+# ==================================================
+# Derive consensus models from inclusion frequencies
+# ==================================================
 
 stability_threshold <- 0.50
 
@@ -854,10 +897,10 @@ subsampling_consensus_models
 
 
 
-
-
 ```{r}
-# Model size stability
+# ==================================================
+# Summarise model size stability
+# ==================================================
 
 model_size_stability <- bind_rows(
   freq_subsampling_summary %>%
@@ -886,7 +929,9 @@ model_size_summary
 
 
 ```{r}
-# Runtime stability for variable-selection subsampling procedures
+# ==================================================
+# Evaluate subsampling runtime stability
+# ==================================================
 
 B_time <- 10
 n_time_runs <- 5
@@ -1022,8 +1067,12 @@ runtime_stability_summary <- runtime_stability_raw %>%
 
 runtime_stability_summary
 ```
+
+
 ```{r}
-# Save results
+# ==================================================
+# Save subsampling results
+# ==================================================
 
 write.csv(
   subsample_or_raw,
@@ -1038,7 +1087,7 @@ write.csv(
 )
 
 write.csv(
-  predictive_performance_raw_export,
+  predictive_performance_raw,
   file.path(subsampling_results_path, "individual_subsample_predictive_performance_raw.csv"),
   row.names = FALSE
 )
