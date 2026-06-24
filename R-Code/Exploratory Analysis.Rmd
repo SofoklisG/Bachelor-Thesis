@@ -20,8 +20,6 @@ The script:
 
 library(tidyverse)
 library(knitr)
-library(ggplot2)
-
 
 # Read dataset 
 
