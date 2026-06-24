@@ -1,7 +1,6 @@
 ---
 title: "Cross Validation"
 output: pdf_document
-date: "2026-05-15"
 ---
 
 ```{r}
