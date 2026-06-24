@@ -359,7 +359,6 @@ ggsave(
   dpi = 300
 )
 
-# Predicted probability comparison for m = 10
 
 pred_plot_m10 <- pred_comparison_m10 %>%
   mutate(
