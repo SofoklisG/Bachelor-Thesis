@@ -13,7 +13,7 @@ The script:
 - compares models across imputation settings,
 - computes predicted probabilities and predictive performance,
 - evaluates computational runtime,
-- generates figures and LaTeX tables.
+- generates figures.
 
 ```{r}
 # ==================================================
