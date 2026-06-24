@@ -1,8 +1,17 @@
 ---
-title: "Comparison Freq. VS Bayes."
-output: pdf_document
-date: "2026-05-07"
+title: "06 - Frequentist vs Bayesian Model Comparison"
+output: html_document
 ---
+
+# Overview
+
+This script compares the final frequentist and Bayesian logistic regression models.
+
+The script:
+- imports the final model results,
+- compares odds ratios and uncertainty intervals,
+- compares predicted probabilities,
+- creates a selected-variable comparison table.
 
 ```{r}
 
