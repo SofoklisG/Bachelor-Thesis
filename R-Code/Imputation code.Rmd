@@ -24,8 +24,8 @@ library(knitr)
 library(mice)
 
 data_path <- "../heart disease dataset.csv"
-
 output_path <- "Imputed-Data"
+
 fig_path <- file.path(output_path, "figures")
 
 if (!dir.exists(output_path)) {
@@ -192,30 +192,4 @@ save_imputation_plots(imp_m5, 5)
 save_imputation_plots(imp_m10, 10)
 save_imputation_plots(imp_m20, 20)
 ```
-
-
-```{r}
-# ==================================================
-# Inspect completed datasets
-# ==================================================
-
-data_imp_m5_1 <- complete(imp_m5, 1)
-data_imp_m10_1 <- complete(imp_m10, 1)
-data_imp_m20_1 <- complete(imp_m20, 1)
-
-summary(data_imp_m5_1)
-colSums(is.na(data_imp_m5_1))
-
-summary(data_imp_m10_1)
-colSums(is.na(data_imp_m10_1))
-
-summary(data_imp_m20_1)
-colSums(is.na(data_imp_m20_1))
-
-sum(data_imp_m5_1$RestingBP == 0)
-sum(data_imp_m5_1$Cholesterol == 0)
-```
-
-
-
 
