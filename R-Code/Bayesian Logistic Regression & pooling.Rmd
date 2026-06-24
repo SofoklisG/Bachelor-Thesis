@@ -34,28 +34,20 @@ library(knitr)
 
 options(brms.backend = "rstan")
 
-output_path <- "."
+input_path <- "Imputed-Data"
 
 bayes_results_path <- file.path(
-  output_path,
   "Results",
   "Bayesian Approach"
 )
 
-results_path <- file.path(output_path, "Results")
-fig_path <- file.path(output_path, "figures")
+fig_path <- "figures"
 
-dir.create(results_path, recursive = TRUE, showWarnings = FALSE)
-dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
 dir.create(bayes_results_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
 
-imp_m5 <- readRDS(
-  file.path(output_path, "Imputed-Data", "imputed_data_m5.rds")
-)
-
-imp_m10 <- readRDS(
-  file.path(output_path, "Imputed-Data", "imputed_data_m10.rds")
-)
+imp_m5 <- readRDS(file.path(input_path, "imputed_data_m5.rds"))
+imp_m10 <- readRDS(file.path(input_path, "imputed_data_m10.rds"))
 ```
 
 
@@ -737,29 +729,6 @@ ggsave(
 # Save Bayesian predictive performance results
 # ==================================================
 
-write.csv(
-  bayesian_predicted_probabilities_m5,
-  file.path(bayes_results_path, "bayesian_predicted_probabilities_by_imputation_m5.csv"),
-  row.names = FALSE
-)
-
-write.csv(
-  bayesian_predicted_probabilities_m10,
-  file.path(bayes_results_path, "bayesian_predicted_probabilities_by_imputation_m10.csv"),
-  row.names = FALSE
-)
-
-write.csv(
-  bayesian_predicted_probabilities_avg_m5,
-  file.path(bayes_results_path, "bayesian_predicted_probabilities_avg_m5.csv"),
-  row.names = FALSE
-)
-
-write.csv(
-  bayesian_predicted_probabilities_avg_m10,
-  file.path(bayes_results_path, "bayesian_predicted_probabilities_avg_m10.csv"),
-  row.names = FALSE
-)
 
 write.csv(
   bayes_performance_by_imp_m5,
@@ -1076,23 +1045,13 @@ write.csv(
 
 # Create Bayesian PIP plot
 
-to_original_variable <- function(x) {
-  x %>%
-    gsub("^Sex.*", "Sex", .) %>%
-    gsub("^ChestPainType.*", "ChestPainType", .) %>%
-    gsub("^FastingBS.*", "FastingBS", .) %>%
-    gsub("^RestingECG.*", "RestingECG", .) %>%
-    gsub("^ExerciseAngina.*", "ExerciseAngina", .) %>%
-    gsub("^ST_Slope.*", "ST_Slope", .)
-}
-
 pips_original_m5 <- avg_pips_m5 %>%
-  mutate(variable = to_original_variable(term)) %>%
+  mutate(variable = clean_variable_names(term)) %>%
   group_by(variable) %>%
   summarise(mean_pip = max(mean_pip), .groups = "drop")
 
 pips_original_m10 <- avg_pips_m10 %>%
-  mutate(variable = to_original_variable(term)) %>%
+ mutate(variable = clean_variable_names(term)) %>%
   group_by(variable) %>%
   summarise(mean_pip = max(mean_pip), .groups = "drop")
 
