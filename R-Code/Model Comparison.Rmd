@@ -15,7 +15,9 @@ The script:
 
 ```{r}
 
-# Packages
+# ==================================================
+# Load packages and define paths
+# ==================================================
 
 library(tidyverse)
 library(readr)
@@ -23,23 +25,20 @@ library(ggplot2)
 library(scales)
 library(knitr)
 
-# Paths
 
 freq_path <- file.path(
-  "..",
   "Results",
   "Frequentist Approach",
   "Pooling results"
 )
 
 bayes_path <- file.path(
-  "..",
   "Results",
   "Bayesian Approach"
 )
 
-fig_path <- "../figures"
-tables_path <- "../Tables"
+fig_path <- "figures"
+tables_path <- "Tables"
 
 dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
 dir.create(tables_path, recursive = TRUE, showWarnings = FALSE)
@@ -47,7 +46,9 @@ dir.create(tables_path, recursive = TRUE, showWarnings = FALSE)
 
 
 ```{r}
+# ==================================================
 # Load final model results
+# ==================================================
 
 freq_final_m5 <- read_csv(
   file.path(freq_path, "frequentist_selected_results_m5.csv")
@@ -65,8 +66,12 @@ bayes_final_m10 <- read_csv(
   file.path(bayes_path, "bayesian_final_results_m10.csv")
 )
 ```
+
+
 ```{r}
-# Clean final model results
+# ==================================================
+# Prepare odds ratio comparison data
+# ==================================================
 
 clean_freq_results <- function(data, m_value) {
   data %>%
@@ -127,7 +132,9 @@ or_comparison <- bind_rows(
 
 
 ```{r}
-# Odds ratio comparison for m = 5
+# ==================================================
+# Compare odds ratios for m = 5 and m = 10
+# ==================================================
 
 or_plot_m5 <- or_comparison %>%
   filter(m == "m = 5") %>%
@@ -169,7 +176,6 @@ ggsave(
   dpi = 300
 )
 
-# Odds ratio comparison for m = 10
 
 or_plot_m10 <- or_comparison %>%
   filter(m == "m = 10") %>%
@@ -215,7 +221,9 @@ ggsave(
 
 
 ```{r}
+# ==================================================
 # Load predicted probabilities
+# ==================================================
 
 freq_pred_m5 <- read_csv(
   file.path(freq_path, "frequentist_predicted_probabilities_m5.csv")
@@ -236,7 +244,9 @@ bayes_pred_m10 <- read_csv(
 ```
 
 ```{r}
-# Average frequentist predicted probabilities
+# ==================================================
+# Prepare predicted probability comparison data
+# ==================================================
 
 freq_pred_m5_avg <- freq_pred_m5 %>%
   group_by(observation = row_number() %% 918, observed) %>%
@@ -298,7 +308,9 @@ pred_comparison_m10 <- freq_pred_m10_avg %>%
 
 
 ```{r}
-# Predicted probability comparison for m = 5
+# ==================================================
+# Compare predicted probabilities for m = 5 and m = 10
+# ==================================================
 
 pred_plot_m5 <- pred_comparison_m5 %>%
   mutate(
@@ -400,7 +412,9 @@ ggsave(
 
 
 ```{r}
-# Selected variables comparison table
+# ==================================================
+# Create selected-variable comparison table
+# ==================================================
 
 selected_variables <- tibble(
   Predictor = c(
@@ -447,12 +461,15 @@ selected_variables <- tibble(
 selected_variables
 ```
 
+
 ```{r}
-# Save selected variables table
+# ==================================================
+# Save selected-variable comparison table
+# ==================================================
 
 write_csv(
   selected_variables,
-  file.path(output_path, "selected_variables_comparison.csv")
+  file.path(tables_path, "selected_variables_comparison.csv")
 )
 
 selected_variables_latex <- kable(
@@ -464,7 +481,7 @@ selected_variables_latex <- kable(
 
 writeLines(
   selected_variables_latex,
-  file.path(output_path, "selected_variables_comparison.tex")
+  file.path(tables_path, "selected_variables_comparison.tex")
 )
 ```
 
