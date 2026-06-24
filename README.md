@@ -17,4 +17,4 @@ The main scripts are located in the `R-Code` folder.
 
 Detailed instructions on the execution order of the scripts, required inputs, generated outputs, and adaptation to new datasets can be found in:
 
-`R-Code/README.txt`
+R-Code/README.txt
