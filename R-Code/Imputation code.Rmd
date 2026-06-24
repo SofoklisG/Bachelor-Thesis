@@ -1,31 +1,49 @@
 ---
-title: "Imputation code"
-output: pdf_document
-date: "2026-04-18"
+title: "02 - Multiple Imputation"
+output: html_document
 ---
+
+# Overview
+
+This script performs the missing-data preprocessing and multiple imputation used in the thesis.
+
+The script:
+- recodes implausible zero values in `RestingBP` and `Cholesterol` as missing,
+- applies Multiple Imputation by Chained Equations (MICE),
+- generates imputed datasets for \(m = 5, 10, 20\),
+- saves the imputed objects and completed datasets,
+- produces diagnostic plots for the imputation procedure.
+
 ```{r}
+# ==================================================
 # Load packages, paths, and data
+# ==================================================
 
 library(tidyverse)
 library(knitr)
-library(ggplot2)
 library(mice)
 
-data_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis/heart.csv"
-output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+data_path <- "../heart disease dataset.csv"
+
+output_path <- "Imputed-Data"
 fig_path <- file.path(output_path, "figures")
 
+if (!dir.exists(output_path)) {
+  dir.create(output_path, recursive = TRUE)
+}
+
 if (!dir.exists(fig_path)) {
-  dir.create(fig_path)
+  dir.create(fig_path, recursive = TRUE)
 }
 
 data <- read_csv(data_path)
 ```
-\textbf{Data Preprocessing}
+
 
 ```{r}
-
+# ==================================================
 # Prepare variables and recode implausible zeros
+# ==================================================
 
 data <- data %>%
   mutate(
@@ -45,7 +63,9 @@ colSums(is.na(data))
 ```
 
 ```{r, fig.width=15}
+# ==================================================
 # Inspect missing data and define MICE settings
+# ==================================================
 
 par(mar = c(5, 4, 4, 2), cex.axis = 1.5)
 md.pattern(data)
@@ -68,7 +88,9 @@ meth[c(
 
 
 ```{r}
+# ==================================================
 # Run MICE for m = 5, 10, and 20
+# ==================================================
 
 run_mice <- function(m_value, seed_value = 123) {
   mice(
@@ -86,14 +108,13 @@ imp_m5  <- run_mice(m_value = 5, seed_value = 123)
 imp_m10 <- run_mice(m_value = 10, seed_value = 123)
 imp_m20 <- run_mice(m_value = 20, seed_value = 123)
 
-imp_m5
-imp_m10
-imp_m20
 ```
 
 
 ```{r}
+# ==================================================
 # Save MICE objects and completed datasets
+# ==================================================
 
 saveRDS(imp_m5,  file.path(output_path, "imputed_data_m5.rds"))
 saveRDS(imp_m10, file.path(output_path, "imputed_data_m10.rds"))
@@ -118,7 +139,9 @@ save_completed_datasets(imp_m20, 20)
 
 
 ```{r}
+# ==================================================
 # Examine imputation diagnostics
+# ==================================================
 
 plot(imp_m5)
 densityplot(imp_m5, ~ Cholesterol, lwd = 2)
@@ -138,7 +161,9 @@ stripplot(imp_m20, RestingBP ~ .imp, pch = 20)
 
 
 ```{r}
+# ==================================================
 # Save diagnostic plots
+# ==================================================
 
 save_imputation_plots <- function(imp_object, m_value) {
   
@@ -170,7 +195,9 @@ save_imputation_plots(imp_m20, 20)
 
 
 ```{r}
+# ==================================================
 # Inspect completed datasets
+# ==================================================
 
 data_imp_m5_1 <- complete(imp_m5, 1)
 data_imp_m10_1 <- complete(imp_m10, 1)
