@@ -65,9 +65,8 @@ Perform exploratory data analysis and obtain descriptive summaries of the datase
 
 * heart disease dataset.csv
 
-### Optional?
-
-Yes. This script is not required for the modelling workflow but is recommended for understanding the dataset.
+### Optional:
+This script is not required for the modelling workflow but is recommended for understanding the dataset.
 
 
 ## Step 2: Imputation code.Rmd
