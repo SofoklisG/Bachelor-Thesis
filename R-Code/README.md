@@ -44,7 +44,7 @@ These folders are automatically created when the scripts are executed.
 
 # Complete Execution Order
 
-The scripts should be run in the following order.
+The scripts should be run in the following order:
 
 ## Step 1: Exploratory Analysis.Rmd
 
