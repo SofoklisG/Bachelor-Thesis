@@ -5,7 +5,9 @@ output:  html_document
 
 ```{r}
 
+# ==================================================
 # Load packages, paths, and imputed dataset
+# ==================================================
 
 library(mice)
 library(dplyr)
@@ -17,30 +19,33 @@ library(caret)
 library(pROC)
 library(brms)
 library(posterior)
+library(knitr)
+library(kableExtra)
 
 options(brms.backend = "rstan")
 
-output_path <- "C:/Users/Sofoklis/Documents/MATHS/Year 3/Block 4/Thesis"
+# Paths
+
+input_path <- "Imputed-Data"
 
 cv_results_path <- file.path(
-  output_path,
   "Results",
   "Cross Validation"
 )
 
-fig_path <- file.path(output_path, "figures")
+fig_path <- "figures"
 
-if (!dir.exists(cv_results_path)) {
-  dir.create(cv_results_path, recursive = TRUE)
-}
+dir.create(cv_results_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
 
-if (!dir.exists(fig_path)) {
-  dir.create(fig_path, recursive = TRUE)
-}
+# Load imputed dataset
 
-imp_m5 <- readRDS(file.path(output_path, "imputed_data_m5.rds"))
+imp_m5 <- readRDS(
+  file.path(input_path, "imputed_data_m5.rds")
+)
 
 # Use one representative completed dataset from m = 5
+
 data_cv <- complete(imp_m5, 1)
 
 data_cv <- data_cv %>%
@@ -53,7 +58,9 @@ data_cv <- data_cv %>%
 
 
 ```{r}
-# Define final selected model formulas and Bayesian settings
+# ==================================================
+# Define final models and Bayesian settings
+# ==================================================
 
 # Final frequentist model
 final_formula_freq <- HeartDisease ~ Age + Sex + ChestPainType +
@@ -80,7 +87,9 @@ bayes_seed <- 123
 
 
 ```{r}
+# ==================================================
 # Create stratified 10-fold cross-validation folds
+# ==================================================
 
 set.seed(123)
 
@@ -119,7 +128,9 @@ write.csv(
 
 
 ```{r}
-# Define function for predictive performance metrics
+# ==================================================
+# Define predictive performance helper functions
+# ==================================================
 
 compute_cv_performance <- function(pred_data) {
   
@@ -149,9 +160,7 @@ compute_cv_performance <- function(pred_data) {
     FN = FN
   )
 }
-```
 
-```{r}
 # Helper function for Confidence Intervals
 
 mean_ci <- function(x) {
@@ -185,7 +194,9 @@ format_mean_ci <- function(x, digits = 3) {
 
 
 ```{r}
-# Frequentist stratified 10-fold cross-validation
+# ==================================================
+# Run frequentist stratified 10-fold cross-validation
+# ==================================================
 
 run_frequentist_cv <- function(data, folds, formula_final) {
   
@@ -239,7 +250,9 @@ write.csv(
 
 
 ```{r}
-# Frequentist cross-validation performance
+# ==================================================
+# Summarise frequentist cross-validation performance
+# ==================================================
 
 freq_cv_fold_performance <- freq_cv_predictions %>%
   group_by(fold) %>%
@@ -261,8 +274,9 @@ freq_cv_summary
 ```
 
 ```{r}
-# Bayesian stratified 10-fold cross-validation
-
+# ==================================================
+# Run Bayesian stratified 10-fold cross-validation
+# ==================================================
 run_bayesian_cv <- function(data, folds, formula_final) {
   
   map_dfr(
@@ -326,7 +340,9 @@ write.csv(
 ```
 
 ```{r}
-# Bayesian cross-validation performance
+# ==================================================
+# Summarise Bayesian cross-validation performance
+# ==================================================
 
 bayes_cv_fold_performance <- bayes_cv_predictions %>%
   group_by(fold) %>%
@@ -348,7 +364,9 @@ bayes_cv_summary
 ```
 
 ```{r}
-# Combine frequentist and Bayesian cross-validation results
+# ==================================================
+# Combine and save cross-validation results
+# ==================================================
 
 cv_predictions_all <- bind_rows(
   freq_cv_predictions,
@@ -391,7 +409,9 @@ write.csv(
 
 
 ```{r}
-# ROC curves from held-out cross-validation predictions
+# ==================================================
+# Create ROC curves from held-out predictions
+# ==================================================
 
 roc_freq_cv <- roc(
   response = freq_cv_predictions$observed,
@@ -577,31 +597,9 @@ ggsave(
 
 
 ```{r}
-# Export LaTeX table for report
-
-library(knitr)
-library(kableExtra)
-
-latex_cv_table <- cv_summary_all %>%
-  kable(
-    format = "latex",
-    booktabs = TRUE,
-    escape = FALSE,
-    caption = "Predictive performance under stratified 10-fold cross-validation. Values are reported as mean with 95\\% confidence intervals across folds.",
-    align = "lcccc"
-  )
-
-writeLines(
-  latex_cv_table,
-  con = file.path(cv_results_path, "stratified_10_fold_cv_table.tex")
-)
-```
-
-
-
-
-```{r}
-# Function for frequentist k-fold and LOO cross-validation
+# ==================================================
+# Define function for frequentist CV method comparison
+# ==================================================
 
 run_frequentist_cv_comparison <- function(data, formula_final, k = NULL, method_name) {
   
@@ -657,7 +655,9 @@ run_frequentist_cv_comparison <- function(data, formula_final, k = NULL, method_
 
 
 ```{r}
-# Run frequentist 5-fold, 10-fold, and LOO cross-validation 
+# ==================================================
+# Run frequentist 5-fold, 10-fold, and LOO CV
+# ==================================================
 
   
   freq_cv_5_predictions <- run_frequentist_cv_comparison(
@@ -693,7 +693,9 @@ freq_cv_loo_predictions
 
 
 ```{r}
-# Fold-wise performance for 5-fold and 10-fold CV
+# ==================================================
+# Compute fold-wise performance for 5-fold and 10-fold CV
+# ==================================================
 
 freq_cv_5_fold_performance <- freq_cv_5_predictions %>%
   group_by(fold) %>%
@@ -712,7 +714,9 @@ freq_cv_10_fold_performance
 ```
 
 ```{r}
-# Mean with 95% CI summaries for 5-fold and 10-fold CV
+# ==================================================
+# Summarise 5-fold and 10-fold CV performance
+# ==================================================
 
 summarise_cv_mean_ci <- function(fold_performance, method_name) {
   
@@ -739,8 +743,12 @@ freq_cv_10_summary <- summarise_cv_mean_ci(
 freq_cv_5_summary
 freq_cv_10_summary
 ```
+
+
 ```{r}
-# Overall LOO performance
+# ==================================================
+# Compute overall LOO CV performance
+# ==================================================
 
 freq_cv_loo_performance <- compute_cv_performance(
   freq_cv_loo_predictions
@@ -758,8 +766,12 @@ freq_cv_loo_summary <- freq_cv_loo_performance %>%
 freq_cv_loo_performance
 freq_cv_loo_summary
 ```
+
+
 ```{r}
-# Combine 5-fold, 10-fold, and LOO CV results
+# ==================================================
+# Combine and save frequentist CV method comparison
+# ==================================================
 
 freq_cv_method_comparison <- bind_rows(
   freq_cv_5_summary,
@@ -781,7 +793,9 @@ write.csv(
 
 
 ```{r}
-# Save fold-wise performance for 5-fold and 10-fold CV
+# ==================================================
+# Save fold-wise frequentist CV performance
+# ==================================================
 
 freq_cv_fold_performance_comparison <- bind_rows(
   freq_cv_5_fold_performance,
@@ -801,7 +815,9 @@ write.csv(
 
 
 ```{r}
-# Cross-validation runtime stability
+# ==================================================
+# Evaluate cross-validation runtime stability
+# ==================================================
 
 n_time_runs <- 5
 
@@ -898,28 +914,4 @@ write.csv(
 )
 ```
 
-
-```{r}
-# Export LaTeX table for frequentist CV comparison
-
-library(knitr)
-library(kableExtra)
-
-latex_freq_cv_method_table <- freq_cv_method_comparison %>%
-  kable(
-    format = "latex",
-    booktabs = TRUE,
-    escape = FALSE,
-    caption = "Predictive performance under stratified 10-fold cross-validation. Values are reported as mean with 95\\% confidence intervals across folds.",
-    align = "lcccc"
-  )
-
-writeLines(
-  latex_freq_cv_method_table,
-  con = file.path(
-    cv_results_path,
-    "frequentist_5fold_10fold_loo_cv_comparison.tex"
-  )
-)
-```
 
