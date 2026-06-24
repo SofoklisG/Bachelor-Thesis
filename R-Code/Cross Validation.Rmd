@@ -245,13 +245,12 @@ run_frequentist_cv <- function(data, folds, formula_final) {
 }
 
   
-  freq_cv_predictions <- run_frequentist_cv(
+freq_cv_predictions <- run_frequentist_cv(
     data = data_cv,
     folds = folds,
     formula_final = final_formula_freq
   )
   
-
 freq_cv_predictions
 
 write.csv(
