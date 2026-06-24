@@ -3,6 +3,19 @@ title: "06 - Cross Validation"
 output:  html_document
 ---
 
+# Overview
+
+This script evaluates and compares the predictive performance of the final frequentist and Bayesian logistic regression models using cross-validation.
+
+The script:
+- loads a representative completed dataset from the multiple imputation procedure,
+- performs stratified 10-fold cross-validation for the frequentist and Bayesian models,
+- computes predictive performance measures (AUC, Accuracy, Sensitivity, and Specificity),
+- generates ROC curves based on held-out predictions,
+- compares frequentist 5-fold, 10-fold, and leave-one-out cross-validation,
+- evaluates the computational runtime of the cross-validation procedures,
+- exports summary tables and figures used in the thesis.
+
 ```{r}
 
 # ==================================================
