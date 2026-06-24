@@ -42,12 +42,12 @@ bayes_results_path <- file.path(
   "Bayesian Approach"
 )
 
+results_path <- file.path(output_path, "Results")
 fig_path <- file.path(output_path, "figures")
-tables_path <- file.path(output_path, "Tables")
 
-dir.create(bayes_results_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(results_path, recursive = TRUE, showWarnings = FALSE)
 dir.create(fig_path, recursive = TRUE, showWarnings = FALSE)
-dir.create(tables_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(bayes_results_path, recursive = TRUE, showWarnings = FALSE)
 
 imp_m5 <- readRDS(
   file.path(output_path, "Imputed-Data", "imputed_data_m5.rds")
