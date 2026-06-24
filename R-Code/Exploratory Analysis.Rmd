@@ -23,7 +23,8 @@ library(knitr)
 
 # Read dataset 
 
-data <- read_csv("../heart.csv")
+data_path <- "../heart disease dataset.csv"
+data <- read_csv(data_path)
 
 # Save the plots
 
