@@ -1,5 +1,5 @@
 ---
-title: "06 - Frequentist vs Bayesian Model Comparison"
+title: "05 - Frequentist vs Bayesian Model Comparison"
 output: html_document
 ---
 
