@@ -159,6 +159,7 @@ get_base_predictor <- function(term) {
   )
 }
 
+# Perform backward variable selection using pooled p-values
 backward_selection_pooled <- function(imp_object, predictors, p_cutoff = 0.05) {
   
   current_predictors <- predictors
