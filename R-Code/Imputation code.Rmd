@@ -92,6 +92,7 @@ meth[c(
 # Run MICE for m = 5, 10, and 20
 # ==================================================
 
+# MICE function
 run_mice <- function(m_value, seed_value = 123) {
   mice(
     data,
