@@ -436,7 +436,6 @@ run_spike_slab_selection <- function(dat, formula_full, niter = 4000, nburnin = 
 # Run Bayesian subsampling selection
 # ==================================================
 
-
 run_bayesian_subsampling_selection <- function(subsamples, prop_label) {
   
   map_dfr(
