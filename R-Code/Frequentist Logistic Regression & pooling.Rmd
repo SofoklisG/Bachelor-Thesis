@@ -103,6 +103,7 @@ fit_full_pooled_model <- function(imp_object) {
     add_significance_stars()
 }
 
+# Fit and pool the logistic regression model across imputations
 fit_pool_model <- function(imp_object, predictors) {
   
   form <- as.formula(
