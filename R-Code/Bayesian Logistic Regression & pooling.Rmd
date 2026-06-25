@@ -235,6 +235,7 @@ write.csv(
 full_formula_selection <- HeartDisease ~ Age + Sex + ChestPainType + RestingBP + Cholesterol +
   FastingBS + RestingECG + MaxHR + ExerciseAngina + Oldpeak + ST_Slope
 
+# Perform Bayesian spike-and-slab variable selection
 run_spike_slab_selection <- function(dat, formula_full, niter = 8000, nburnin = 2000) {
   
   X <- model.matrix(formula_full, data = dat)[, -1]
@@ -410,7 +411,7 @@ final_formula_bayes <- as.formula(
   paste("HeartDisease ~", paste(selected_bayes_common, collapse = " + "))
 )
 
-
+# Fit the final Bayesian logistic regression model
 fit_final_bayes <- function(completed_data_list, formula_final) {
   
   map(
