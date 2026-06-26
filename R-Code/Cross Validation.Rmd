@@ -211,6 +211,7 @@ format_mean_ci <- function(x, digits = 3) {
 # Run frequentist stratified 10-fold cross-validation
 # ==================================================
 
+# Frequentist stratified 10-fold cross-validation function
 run_frequentist_cv <- function(data, folds, formula_final) {
   
   map_dfr(
