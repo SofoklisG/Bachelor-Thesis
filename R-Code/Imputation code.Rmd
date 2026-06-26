@@ -10,7 +10,7 @@ This script performs the missing-data preprocessing and multiple imputation used
 The script:
 - recodes implausible zero values in `RestingBP` and `Cholesterol` as missing,
 - applies Multiple Imputation by Chained Equations (MICE),
-- generates imputed datasets for \(m = 5, 10, 20\),
+- generates imputed datasets for (m = 5, 10, 20),
 - saves the imputed objects and completed datasets,
 - produces diagnostic plots for the imputation procedure.
 
