@@ -289,6 +289,8 @@ freq_cv_summary
 # ==================================================
 # Run Bayesian stratified 10-fold cross-validation
 # ==================================================
+
+# Bayesian stratified 10-fold cross-validation function
 run_bayesian_cv <- function(data, folds, formula_final) {
   
   map_dfr(
