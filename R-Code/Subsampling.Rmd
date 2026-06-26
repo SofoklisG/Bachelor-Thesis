@@ -255,6 +255,7 @@ backward_selection_single <- function(data, predictors, p_cutoff = 0.05) {
 # Run frequentist subsampling selection
 # ==================================================
 
+# Frequentist subsampling selection function
 run_frequentist_subsampling <- function(subsamples, prop_label) {
   
   map_dfr(
@@ -436,6 +437,7 @@ run_spike_slab_selection <- function(dat, formula_full, niter = 4000, nburnin = 
 # Run Bayesian subsampling selection
 # ==================================================
 
+# Bayesian subsampling selection function
 run_bayesian_subsampling_selection <- function(subsamples, prop_label) {
   
   map_dfr(
